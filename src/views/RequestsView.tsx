@@ -24,7 +24,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const [requiredDate, setRequiredDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedEmpId, setSelectedEmpId] = useState(employees[0]?.employeeId || '');
 
-  const canApprove = userRole === 'Super Admin' || userRole === 'Approver' || userRole === 'Inventory Manager';
+  const canApprove = userRole === 'Super Admin' || userRole === 'Inventory & Finance Admin' || (userRole as any) === 'Inventory Manager' || userRole === 'Approver';
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

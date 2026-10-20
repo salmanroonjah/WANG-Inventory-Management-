@@ -86,7 +86,10 @@ export default function App() {
   const [voucherData, setVoucherData] = useState<{ asset: Asset; transaction: AssetTransaction } | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const canManage = currentUser.role === 'Super Admin' || currentUser.role === 'Inventory Manager';
+  const canManage = currentUser.role === 'Super Admin' || 
+    currentUser.role === 'Inventory & Finance Admin' || 
+    currentUser.role === 'IT Administrator' || 
+    (currentUser.role as any) === 'Inventory Manager';
 
   const loadData = async () => {
     try {
@@ -193,9 +196,29 @@ export default function App() {
 
   const handleSwitchRole = async (role: UserRole) => {
     try {
-      const updatedUser = await api.switchRole(role);
+      let targetEmpId = 'EMP-001';
+      let targetName = 'Dr. Salman Khan';
+      if (role === 'Inventory & Finance Admin' || (role as any) === 'Inventory Manager') {
+        const found = employees.find(e => e.role === 'Inventory & Finance Admin' || e.employeeId === 'EMP-002');
+        targetEmpId = found?.employeeId || 'EMP-002';
+        targetName = found?.fullName || 'Ayesha Noor';
+      } else if (role === 'IT Administrator') {
+        const found = employees.find(e => e.role === 'IT Administrator' || e.employeeId === 'EMP-004');
+        targetEmpId = found?.employeeId || 'EMP-004';
+        targetName = found?.fullName || 'Fatima Zahra';
+      } else if (role === 'Employee') {
+        const found = employees.find(e => (!e.role || e.role === 'Employee') && e.employeeId !== 'EMP-001');
+        targetEmpId = found?.employeeId || 'EMP-003';
+        targetName = found?.fullName || 'Bilal Tariq';
+      } else if (role === 'Super Admin') {
+        const found = employees.find(e => e.employeeId === 'EMP-001' || e.designation.toLowerCase().includes('executive director'));
+        targetEmpId = found?.employeeId || 'EMP-001';
+        targetName = found?.fullName || 'Dr. Salman Khan';
+      }
+
+      const updatedUser = await api.switchRole(role, targetEmpId, targetName);
       setCurrentUser(updatedUser);
-      loadData();
+      await loadData();
     } catch (err) {
       console.error('Failed to switch role', err);
     }
@@ -330,12 +353,15 @@ export default function App() {
                 employees={employees}
                 allAssets={assets}
                 userRole={currentUser.role}
+                currentUser={currentUser}
                 onOpenIssueForEmployee={(empId) => {
                   const available = assets.find(a => a.status === 'Available');
                   if (available) setIssueModalAsset(available);
                 }}
                 onOpenReturnForAsset={(a) => setReturnModalAsset(a)}
                 onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
+                onRefreshData={loadData}
+                onUpdateCurrentUser={(updated) => setCurrentUser(updated)}
                 canManage={canManage}
               />
             )}

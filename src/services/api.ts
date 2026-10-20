@@ -22,10 +22,10 @@ const BASE_URL = '/api';
 // Fallback initial seed for static GitHub hosting (where backend Express server is not available)
 const FALLBACK_SEED = {
   user: {
-    userId: 'USR-ADMIN-01',
-    name: 'Admin Manager',
-    email: 'admin@wang.org.pk',
-    role: 'Inventory Manager' as UserRole,
+    userId: 'USR-EXEC-01',
+    name: 'Dr. Salman Khan',
+    email: 'salmankhanroonjha123@gmail.com',
+    role: 'Super Admin' as UserRole,
     employeeId: 'EMP-001',
     officeBranch: 'Head Office - Islamabad'
   },
@@ -43,11 +43,11 @@ const FALLBACK_SEED = {
     { categoryId: 'CAT-WAS', categoryName: 'Water & Sanitation', description: 'Water filtration plants, pumps, plumbing supplies, and sanitation hardware', totalAssets: 0 }
   ],
   employees: [
-    { employeeId: 'EMP-001', fullName: 'Dr. Salman Khan', department: 'Executive Management', designation: 'Executive Director', email: 'salmankhanroonjha123@gmail.com', phone: '+92 300 8765432', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1 },
-    { employeeId: 'EMP-002', fullName: 'Ayesha Noor', department: 'Program Operations', designation: 'Senior Program Manager', email: 'ayesha.noor@wang.org.pk', phone: '+92 312 9876543', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1 },
-    { employeeId: 'EMP-003', fullName: 'Bilal Tariq', department: 'Finance & Compliance', designation: 'Finance & Accounts Officer', email: 'bilal.tariq@wang.org.pk', phone: '+92 333 4567890', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 0 },
-    { employeeId: 'EMP-004', fullName: 'Fatima Zahra', department: 'IT & Communications', designation: 'Systems & Media Administrator', email: 'fatima.zahra@wang.org.pk', phone: '+92 345 6789012', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1 },
-    { employeeId: 'EMP-005', fullName: 'Tariq Mehmood', department: 'Logistics & Field Support', designation: 'Field Logistics Coordinator', email: 'tariq.mehmood@wang.org.pk', phone: '+92 321 3456789', officeBranch: 'Field Office - Quetta', activeStatus: true, assignedAssetCount: 0 }
+    { employeeId: 'EMP-001', fullName: 'Dr. Salman Khan', department: 'Executive Management', designation: 'Executive Director', email: 'salmankhanroonjha123@gmail.com', phone: '+92 300 8765432', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'Super Admin' as UserRole },
+    { employeeId: 'EMP-002', fullName: 'Ayesha Noor', department: 'Admin & Finance', designation: 'Manager Admin & Finance', email: 'ayesha.noor@wang.org.pk', phone: '+92 312 9876543', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'Inventory & Finance Admin' as UserRole },
+    { employeeId: 'EMP-003', fullName: 'Bilal Tariq', department: 'Finance & Compliance', designation: 'Finance & Accounts Officer', email: 'bilal.tariq@wang.org.pk', phone: '+92 333 4567890', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 0, role: 'Employee' as UserRole },
+    { employeeId: 'EMP-004', fullName: 'Fatima Zahra', department: 'IT Department', designation: 'IT Systems Administrator', email: 'fatima.zahra@wang.org.pk', phone: '+92 345 6789012', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'IT Administrator' as UserRole },
+    { employeeId: 'EMP-005', fullName: 'Tariq Mehmood', department: 'Logistics & Field Support', designation: 'Field Logistics Coordinator', email: 'tariq.mehmood@wang.org.pk', phone: '+92 321 3456789', officeBranch: 'Field Office - Quetta', activeStatus: true, assignedAssetCount: 0, role: 'Employee' as UserRole }
   ],
   locations: [
     { locationId: 'LOC-HO-101', officeBranch: 'Head Office - Islamabad', building: 'Main Administrative Block', floor: '1st Floor', room: 'Room 101 - Executive Suite', description: 'Executive Director and Board meeting room', isStore: false, assetCount: 1 },
@@ -485,6 +485,13 @@ export const api = {
     store.user.role = role;
     if (name) store.user.name = name;
     if (employeeId) store.user.employeeId = employeeId;
+    const target = store.employees.find((e: any) => (employeeId && e.employeeId === employeeId) || e.role === role);
+    if (target) {
+      store.user.name = target.fullName;
+      store.user.email = target.email;
+      store.user.employeeId = target.employeeId;
+      store.user.officeBranch = target.officeBranch;
+    }
     saveLocalStore(store);
     return store.user;
   },
@@ -839,6 +846,136 @@ export const api = {
     const assignedAssets = store.assets.filter((a: any) => a.assignedEmployeeId === id && a.status === 'Issued');
     const history = store.transactions.filter((t: any) => t.employeeId === id);
     return { employee, assignedAssets, history };
+  },
+
+  async createEmployee(payload: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
+    const data = await safeFetch<any>('/employees', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const store = getLocalStore();
+    let empId = payload.employeeId?.trim().toUpperCase();
+    if (!empId) {
+      const highestNum = store.employees.reduce((max: number, e: any) => {
+        const match = e.employeeId.match(/\d+/);
+        return match ? Math.max(max, parseInt(match[0], 10)) : max;
+      }, 0);
+      empId = `EMP-${String(highestNum + 1).padStart(3, '0')}`;
+    }
+
+    const newEmp: Employee = {
+      employeeId: empId,
+      fullName: payload.fullName?.trim() || 'New Staff',
+      department: payload.department || 'Administration',
+      designation: payload.designation || 'Staff Member',
+      email: payload.email || '',
+      phone: payload.phone || '',
+      officeBranch: payload.officeBranch || 'Head Office - Islamabad',
+      activeStatus: true,
+      assignedAssetCount: 0,
+      role: payload.role || 'Employee'
+    };
+
+    if (!store.employees.some((e: any) => e.employeeId === empId)) {
+      store.employees.push(newEmp);
+      saveLocalStore(store);
+    }
+
+    if (data && data.success) return data;
+    return { success: true, message: `Employee ${newEmp.fullName} registered successfully`, employee: newEmp };
+  },
+
+  async updateEmployee(id: string, updates: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
+    const data = await safeFetch<any>(`/employees/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const store = getLocalStore();
+    const emp = store.employees.find((e: any) => e.employeeId.toUpperCase() === id.toUpperCase());
+    if (emp) {
+      Object.assign(emp, updates);
+      if (updates.fullName) {
+        store.assets.forEach((a: any) => {
+          if (a.assignedEmployeeId === id) a.assignedTo = updates.fullName;
+        });
+      }
+      if (store.user && store.user.employeeId === id) {
+        if (updates.fullName) store.user.name = updates.fullName;
+        if (updates.email) store.user.email = updates.email;
+        if (updates.role) store.user.role = updates.role;
+        if (updates.officeBranch) store.user.officeBranch = updates.officeBranch;
+      }
+      saveLocalStore(store);
+    }
+
+    if (data && data.success) return data;
+    if (!emp) throw new Error('Employee not found');
+    return { success: true, message: `Employee ${emp.fullName} updated`, employee: emp };
+  },
+
+  async deleteEmployee(id: string): Promise<{ success: boolean; message: string }> {
+    if (id === 'EMP-001') {
+      throw new Error('Executive Director (Super Admin) account cannot be deleted.');
+    }
+
+    const data = await safeFetch<any>(`/employees/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+
+    const store = getLocalStore();
+    const idx = store.employees.findIndex((e: any) => e.employeeId.toUpperCase() === id.toUpperCase());
+    if (idx !== -1) {
+      const activeAssets = store.assets.filter((a: any) => a.assignedEmployeeId === id && a.status === 'Issued');
+      if (activeAssets.length > 0) {
+        throw new Error(`Cannot delete: Employee has ${activeAssets.length} active assigned asset(s).`);
+      }
+      const removed = store.employees.splice(idx, 1)[0];
+      saveLocalStore(store);
+      if (data && data.success) return data;
+      return { success: true, message: `Employee ${removed.fullName} removed from registry` };
+    }
+
+    if (data && data.success) return data;
+    return { success: true, message: 'Employee removed' };
+  },
+
+  async updateUserProfile(updates: { name?: string; email?: string; phone?: string; officeBranch?: string; designation?: string }): Promise<UserSession> {
+    const data = await safeFetch<any>('/auth/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const store = getLocalStore();
+    if (updates.name) store.user.name = updates.name;
+    if (updates.email) store.user.email = updates.email;
+    if (updates.officeBranch) store.user.officeBranch = updates.officeBranch;
+
+    if (store.user.employeeId) {
+      const emp = store.employees.find((e: any) => e.employeeId === store.user.employeeId);
+      if (emp) {
+        if (updates.name) emp.fullName = updates.name;
+        if (updates.email) emp.email = updates.email;
+        if (updates.phone) emp.phone = updates.phone;
+        if (updates.officeBranch) emp.officeBranch = updates.officeBranch;
+        if (updates.designation) emp.designation = updates.designation;
+      }
+    }
+    const execEmp = store.employees.find((e: any) => e.employeeId === 'EMP-001');
+    if (execEmp) {
+      if (updates.name) execEmp.fullName = updates.name;
+      if (updates.email) execEmp.email = updates.email;
+      if (updates.phone) execEmp.phone = updates.phone;
+      if (updates.officeBranch) execEmp.officeBranch = updates.officeBranch;
+      if (updates.designation) execEmp.designation = updates.designation;
+    }
+    saveLocalStore(store);
+
+    if (data && data.success) return data.user;
+    return store.user;
   },
 
   async getCategories(): Promise<Category[]> {

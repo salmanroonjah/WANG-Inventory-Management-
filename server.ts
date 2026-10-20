@@ -16,10 +16,10 @@ app.use(express.json());
 
 // In-memory active session for testing role-based access control
 let activeSession = {
-  userId: 'USR-ADMIN-01',
-  name: 'Admin Manager',
-  email: 'admin@wang.org.pk',
-  role: 'Inventory Manager' as UserRole,
+  userId: 'USR-EXEC-01',
+  name: 'Dr. Salman Khan',
+  email: 'salmankhanroonjha123@gmail.com',
+  role: 'Super Admin' as UserRole,
   employeeId: 'EMP-001',
   officeBranch: 'Head Office - Islamabad'
 };
@@ -34,6 +34,28 @@ app.get('/api/auth/current-user', (_req: Request, res: Response) => {
   res.json({ success: true, user: activeSession });
 });
 
+app.put('/api/auth/profile', (req: Request, res: Response) => {
+  const { name, email, phone, officeBranch, designation } = req.body;
+  if (name) activeSession.name = name;
+  if (email) activeSession.email = email;
+  if (officeBranch) activeSession.officeBranch = officeBranch;
+
+  if (activeSession.employeeId) {
+    db.updateEmployee(activeSession.employeeId, {
+      fullName: name || activeSession.name,
+      email: email || activeSession.email,
+      phone: phone,
+      officeBranch: officeBranch || activeSession.officeBranch,
+      designation: designation
+    }, {
+      userId: activeSession.userId,
+      name: activeSession.name
+    });
+  }
+
+  res.json({ success: true, message: 'Profile updated successfully', user: activeSession });
+});
+
 app.post('/api/auth/switch-role', (req: Request, res: Response) => {
   const { role, employeeId, name } = req.body;
   if (!role) {
@@ -42,6 +64,13 @@ app.post('/api/auth/switch-role', (req: Request, res: Response) => {
   activeSession.role = role;
   if (name) activeSession.name = name;
   if (employeeId) activeSession.employeeId = employeeId;
+  const targetEmp = db.getEmployees().find(e => (employeeId && e.employeeId === employeeId) || e.role === role);
+  if (targetEmp) {
+    activeSession.name = targetEmp.fullName;
+    activeSession.email = targetEmp.email;
+    activeSession.employeeId = targetEmp.employeeId;
+    activeSession.officeBranch = targetEmp.officeBranch;
+  }
   res.json({ success: true, message: `Switched role to ${role}`, user: activeSession });
 });
 
@@ -272,6 +301,63 @@ app.get('/api/employees/:id', (req: Request, res: Response) => {
     assignedAssets,
     history
   });
+});
+
+app.post('/api/employees', (req: Request, res: Response) => {
+  if (activeSession.role !== 'Super Admin') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Super Admin can register new staff/admin profiles.' });
+  }
+
+  const result = db.createEmployee(req.body, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.status(201).json(result);
+});
+
+app.put('/api/employees/:id', (req: Request, res: Response) => {
+  const isSelf = activeSession.employeeId === req.params.id;
+  const isSuperAdmin = activeSession.role === 'Super Admin';
+
+  if (!isSuperAdmin && !isSelf) {
+    return res.status(403).json({ success: false, message: 'Unauthorized: You do not have permission to edit other staff profiles.' });
+  }
+
+  const updates = { ...req.body };
+  if (!isSuperAdmin) {
+    delete updates.role;
+    delete updates.employeeId;
+  }
+
+  const result = db.updateEmployee(req.params.id, updates, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+
+  if (!result.success) return res.status(400).json(result);
+
+  if (isSelf) {
+    if (updates.fullName) activeSession.name = updates.fullName;
+    if (updates.email) activeSession.email = updates.email;
+    if (updates.role && isSuperAdmin) activeSession.role = updates.role;
+    if (updates.officeBranch) activeSession.officeBranch = updates.officeBranch;
+  }
+
+  res.json(result);
+});
+
+app.delete('/api/employees/:id', (req: Request, res: Response) => {
+  if (activeSession.role !== 'Super Admin') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Super Admin can remove employee records.' });
+  }
+
+  const result = db.deleteEmployee(req.params.id, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
 });
 
 // --- CATEGORIES & LOCATIONS ---

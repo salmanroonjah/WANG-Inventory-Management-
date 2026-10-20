@@ -28,10 +28,13 @@ export type RecordCompletion =
 
 export type UserRole = 
   | 'Super Admin'
-  | 'Inventory Manager'
-  | 'Approver'
+  | 'Inventory & Finance Admin'
+  | 'IT Administrator'
   | 'Employee'
+  | 'Inventory Manager' // Backward-compatible alias for Inventory & Finance Admin
+  | 'Approver'
   | 'Auditor';
+
 
 export type ViewTab = 
   | 'dashboard'
@@ -133,6 +136,7 @@ export interface Employee {
   officeBranch: string;
   activeStatus: boolean;
   assignedAssetCount: number;
+  role?: UserRole;
 }
 
 export interface Category {

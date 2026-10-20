@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, ChevronDown, RefreshCw, Menu, Download } from 'lucide-react';
+import { Camera, ChevronDown, RefreshCw, Menu, Download, Shield, User } from 'lucide-react';
 import { UserRole, UserSession } from '../types/inventory.js';
 import { api } from '../services/api.js';
 
@@ -20,12 +20,32 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [showRoleMenu, setShowRoleMenu] = useState(false);
 
-  const roles: UserRole[] = [
-    'Super Admin',
-    'Inventory Manager',
-    'Approver',
-    'Employee',
-    'Auditor'
+  // The 3 official WANG Admin Roles + Employee
+  const roleOptions: { role: UserRole; title: string; subtitle: string; icon: string }[] = [
+    {
+      role: 'Super Admin',
+      title: 'Super Admin',
+      subtitle: 'Executive Director (Full Authority)',
+      icon: '👑'
+    },
+    {
+      role: 'Inventory & Finance Admin',
+      title: 'Inventory & Finance Admin',
+      subtitle: 'Manager Admin & Finance',
+      icon: '💼'
+    },
+    {
+      role: 'IT Administrator',
+      title: 'IT Administrator',
+      subtitle: 'IT Department (Hardware & Systems)',
+      icon: '💻'
+    },
+    {
+      role: 'Employee',
+      title: 'Employee',
+      subtitle: 'General Staff Member',
+      icon: '👤'
+    }
   ];
 
   const handleExportBackup = () => {
@@ -110,20 +130,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-[11px]">Reset</span>
           </button>
 
-          {/* Role Switcher Dropdown */}
+          {/* Role Switcher Dropdown (The 3 WANG Admins) */}
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
               className="px-2.5 py-1.5 bg-[#002254] hover:bg-[#001a40] rounded-lg text-xs flex items-center gap-2 transition-colors border border-white/20 shadow-xs"
             >
-              <div className="w-5 h-5 rounded-full bg-[#f1cc11] flex items-center justify-center text-[10px] font-bold text-[#003279]">
-                {currentUser.name.charAt(0)}
+              <div className="w-6 h-6 rounded-full bg-[#f1cc11] flex items-center justify-center text-[11px] font-black text-[#003279] shadow-2xs">
+                {currentUser.name ? currentUser.name.charAt(0) : 'U'}
               </div>
               <div className="text-left hidden sm:block">
-                <span className="text-[11px] font-medium block leading-tight text-white">
+                <span className="text-[11px] font-bold block leading-tight text-white max-w-[120px] truncate">
                   {currentUser.name}
                 </span>
-                <span className="text-[10px] text-[#f1cc11] font-semibold block leading-none">
+                <span className="text-[10px] text-[#f1cc11] font-semibold block leading-none flex items-center gap-1">
+                  <Shield className="w-2.5 h-2.5 fill-current" />
                   {currentUser.role}
                 </span>
               </div>
@@ -136,36 +157,61 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="fixed inset-0 z-40" 
                   onClick={() => setShowRoleMenu(false)} 
                 />
-                <div className="absolute right-0 mt-2 w-56 bg-white text-slate-900 rounded-lg shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-3 py-2 border-b border-slate-100">
-                    <p className="text-[11px] font-semibold text-[#003279] uppercase tracking-wider">
-                      Switch Role Simulation
+                <div className="absolute right-0 mt-2 w-72 bg-white text-slate-900 rounded-xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3.5 py-2 border-b border-slate-100">
+                    <p className="text-[11px] font-black text-[#003279] uppercase tracking-wider flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-[#f1cc11] fill-current" />
+                      WANG Administrative Roles
                     </p>
                     <p className="text-[10px] text-slate-500">
-                      Test permissions for WANG staff
+                      Switch active administrator view or staff persona
                     </p>
                   </div>
-                  {roles.map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => {
-                        onSwitchRole(r);
-                        setShowRoleMenu(false);
-                      }}
-                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors ${
-                        currentUser.role === r ? 'font-bold text-[#003279] bg-slate-50' : 'text-slate-700'
-                      }`}
-                    >
-                      <span>{r}</span>
-                      {currentUser.role === r && (
-                        <span className="text-[10px] font-bold text-[#003279] bg-[#f1cc11] px-1.5 py-0.5 rounded">Active</span>
-                      )}
-                    </button>
-                  ))}
-                  <div className="border-t border-slate-100 mt-1 pt-1 px-3 py-1">
-                    <span className="text-[10px] text-slate-500 block leading-tight">
-                      Simulates organizational role-based access control.
-                    </span>
+
+                  <div className="p-1 space-y-1">
+                    {roleOptions.map((opt) => {
+                      const isActive = currentUser.role === opt.role || 
+                        (opt.role === 'Inventory & Finance Admin' && (currentUser.role as any) === 'Inventory Manager');
+
+                      return (
+                        <button
+                          key={opt.role}
+                          onClick={() => {
+                            onSwitchRole(opt.role);
+                            setShowRoleMenu(false);
+                          }}
+                          className={`w-full text-left p-2.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                            isActive 
+                              ? 'bg-blue-50 border border-blue-200' 
+                              : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-base">{opt.icon}</span>
+                            <div>
+                              <div className={`font-bold ${isActive ? 'text-[#003279]' : 'text-slate-800'}`}>
+                                {opt.title}
+                              </div>
+                              <div className="text-[10px] text-slate-500 leading-tight">
+                                {opt.subtitle}
+                              </div>
+                            </div>
+                          </div>
+                          {isActive && (
+                            <span className="text-[10px] font-black text-[#003279] bg-[#f1cc11] px-2 py-0.5 rounded shadow-2xs">
+                              Active
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="border-t border-slate-100 mt-1 pt-2 px-3 pb-1">
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <User className="w-3 h-3 text-[#003279]" />
+                      <span>Executive Director has Super Admin authority.</span>
+                    </div>
                   </div>
                 </div>
               </>

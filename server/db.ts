@@ -121,18 +121,20 @@ const INITIAL_SEED: DatabaseSchema = {
       phone: '+92 300 8765432',
       officeBranch: 'Head Office - Islamabad',
       activeStatus: true,
-      assignedAssetCount: 1
+      assignedAssetCount: 1,
+      role: 'Super Admin'
     },
     {
       employeeId: 'EMP-002',
       fullName: 'Ayesha Noor',
-      department: 'Program Operations',
-      designation: 'Senior Program Manager',
+      department: 'Admin & Finance',
+      designation: 'Manager Admin & Finance',
       email: 'ayesha.noor@wang.org.pk',
       phone: '+92 312 9876543',
       officeBranch: 'Head Office - Islamabad',
       activeStatus: true,
-      assignedAssetCount: 1
+      assignedAssetCount: 1,
+      role: 'Inventory & Finance Admin'
     },
     {
       employeeId: 'EMP-003',
@@ -143,18 +145,20 @@ const INITIAL_SEED: DatabaseSchema = {
       phone: '+92 333 4567890',
       officeBranch: 'Head Office - Islamabad',
       activeStatus: true,
-      assignedAssetCount: 0
+      assignedAssetCount: 0,
+      role: 'Employee'
     },
     {
       employeeId: 'EMP-004',
       fullName: 'Fatima Zahra',
-      department: 'IT & Communications',
-      designation: 'Systems & Media Administrator',
+      department: 'IT Department',
+      designation: 'IT Systems Administrator',
       email: 'fatima.zahra@wang.org.pk',
       phone: '+92 345 6789012',
       officeBranch: 'Head Office - Islamabad',
       activeStatus: true,
-      assignedAssetCount: 1
+      assignedAssetCount: 1,
+      role: 'IT Administrator'
     },
     {
       employeeId: 'EMP-005',
@@ -165,7 +169,8 @@ const INITIAL_SEED: DatabaseSchema = {
       phone: '+92 321 3456789',
       officeBranch: 'Field Office - Quetta',
       activeStatus: true,
-      assignedAssetCount: 0
+      assignedAssetCount: 0,
+      role: 'Employee'
     }
   ],
   locations: [
@@ -1474,6 +1479,131 @@ class Database {
 
     this.saveData();
     return { success: true, message: `Asset ${cleanId} permanently deleted.` };
+  }
+
+  /**
+   * CREATE EMPLOYEE
+   */
+  public createEmployee(data: Partial<Employee>, performedBy: { userId: string; name: string }): { success: boolean; message: string; employee?: Employee } {
+    if (!data.fullName || !data.fullName.trim()) {
+      return { success: false, message: 'Employee full name is mandatory.' };
+    }
+
+    let empId = data.employeeId?.trim().toUpperCase();
+    if (!empId) {
+      const highestNum = this.data.employees.reduce((max, e) => {
+        const match = e.employeeId.match(/\d+/);
+        return match ? Math.max(max, parseInt(match[0], 10)) : max;
+      }, 0);
+      empId = `EMP-${String(highestNum + 1).padStart(3, '0')}`;
+    }
+
+    if (this.data.employees.some(e => e.employeeId.toUpperCase() === empId)) {
+      return { success: false, message: `Employee ID "${empId}" already exists.` };
+    }
+
+    const newEmp: Employee = {
+      employeeId: empId,
+      fullName: data.fullName.trim(),
+      department: data.department || 'Administration',
+      designation: data.designation || 'Staff Member',
+      email: data.email || '',
+      phone: data.phone || '',
+      officeBranch: data.officeBranch || 'Head Office - Islamabad',
+      activeStatus: data.activeStatus !== undefined ? data.activeStatus : true,
+      assignedAssetCount: 0,
+      role: data.role || 'Employee'
+    };
+
+    this.data.employees.push(newEmp);
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'ADD_EMPLOYEE',
+      recordType: 'Employee',
+      recordId: newEmp.employeeId,
+      details: `New employee registered: ${newEmp.fullName} (${newEmp.employeeId}) with role: ${newEmp.role}`
+    });
+
+    this.saveData();
+    return { success: true, message: `Employee ${newEmp.fullName} registered successfully.`, employee: newEmp };
+  }
+
+  /**
+   * UPDATE EMPLOYEE & ROLE
+   */
+  public updateEmployee(employeeId: string, updates: Partial<Employee>, performedBy: { userId: string; name: string }): { success: boolean; message: string; employee?: Employee } {
+    const cleanId = employeeId.trim().toUpperCase();
+    const emp = this.data.employees.find(e => e.employeeId.toUpperCase() === cleanId);
+    if (!emp) {
+      return { success: false, message: `Employee "${cleanId}" not found.` };
+    }
+
+    const oldName = emp.fullName;
+    Object.assign(emp, updates);
+
+    if (updates.fullName && updates.fullName !== oldName) {
+      for (const asset of this.data.assets) {
+        if (asset.assignedEmployeeId === emp.employeeId) {
+          asset.assignedTo = updates.fullName;
+        }
+      }
+    }
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'UPDATE_EMPLOYEE',
+      recordType: 'Employee',
+      recordId: emp.employeeId,
+      details: `Updated details for ${emp.fullName} (${emp.employeeId}). Assigned role: ${emp.role || 'Employee'}`
+    });
+
+    this.saveData();
+    return { success: true, message: `Employee ${emp.fullName} updated successfully.`, employee: emp };
+  }
+
+  /**
+   * DELETE EMPLOYEE
+   */
+  public deleteEmployee(employeeId: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const cleanId = employeeId.trim().toUpperCase();
+    const index = this.data.employees.findIndex(e => e.employeeId.toUpperCase() === cleanId);
+    if (index === -1) {
+      return { success: false, message: `Employee "${cleanId}" not found.` };
+    }
+
+    const emp = this.data.employees[index];
+
+    if (emp.employeeId === 'EMP-001' || emp.designation === 'Executive Director') {
+      return { success: false, message: 'Executive Director (Super Admin) account cannot be removed.' };
+    }
+
+    const activeAssets = this.data.assets.filter(a => a.assignedEmployeeId === emp.employeeId && a.status === 'Issued');
+    if (activeAssets.length > 0) {
+      return { 
+        success: false, 
+        message: `Cannot delete employee: ${emp.fullName} currently has ${activeAssets.length} active assigned asset(s). Please process return first.` 
+      };
+    }
+
+    this.data.employees.splice(index, 1);
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_EMPLOYEE',
+      recordType: 'Employee',
+      recordId: cleanId,
+      details: `Removed employee record: ${emp.fullName} (${cleanId})`
+    });
+
+    this.saveData();
+    return { success: true, message: `Employee ${emp.fullName} removed from registry.` };
   }
 
   // --- Consumables Transactions ---
