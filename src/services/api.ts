@@ -633,6 +633,52 @@ export const api = {
     return { asset, message: 'Asset updated successfully' };
   },
 
+  async deleteAsset(id: string): Promise<{ success: boolean; message: string }> {
+    const cleanId = id.trim().toUpperCase();
+    const data = await safeFetch<{ success: boolean; message: string }>(`/assets/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE'
+    });
+    // Always sync local store for offline & Cloudflare/GitHub Pages
+    const store = getLocalStore();
+    const idx = store.assets.findIndex((a: any) => a.assetId.toUpperCase() === cleanId);
+    if (idx !== -1) {
+      const removed = store.assets.splice(idx, 1)[0];
+      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+      store.activityLogs.unshift({
+        logId: `LOG-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        userId: store.user.userId,
+        userName: store.user.name,
+        userRole: store.user.role,
+        action: 'DELETE_ASSET',
+        recordType: 'Asset',
+        recordId: cleanId,
+        details: `Deleted asset ${removed.itemName} (${cleanId})`
+      });
+      saveLocalStore(store);
+    }
+    if (data && data.success) return data;
+    return { success: true, message: `Asset ${cleanId} deleted successfully` };
+  },
+
+  exportFullBackup(): string {
+    const store = getLocalStore();
+    return JSON.stringify(store, null, 2);
+  },
+
+  importFullBackup(jsonContent: string): { success: boolean; message: string } {
+    try {
+      const parsed = JSON.parse(jsonContent);
+      if (!parsed || !Array.isArray(parsed.assets)) {
+        throw new Error('Invalid backup file: Missing assets array');
+      }
+      saveLocalStore(parsed);
+      return { success: true, message: `Backup restored with ${parsed.assets.length} assets.` };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Failed to parse backup JSON' };
+    }
+  },
+
   async issueAsset(payload: {
     assetId: string;
     employeeId: string;

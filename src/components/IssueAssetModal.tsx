@@ -83,19 +83,21 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
-      <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+      <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-100">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
-          <div className="flex items-center gap-2">
-            <Send className="w-5 h-5 text-emerald-700" />
+        <div className="flex items-center justify-between border-b border-[#002254] px-6 py-4 bg-[#003279] text-white">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded bg-[#f1cc11] text-[#003279] flex items-center justify-center font-bold">
+              <Send className="w-4 h-4" />
+            </div>
             <div>
-              <h3 className="font-semibold text-slate-900 text-base">Issue Asset to Employee</h3>
-              <p className="text-xs text-slate-500 font-mono">Asset ID: {asset.assetId}</p>
+              <h3 className="font-bold text-white text-base">Issue Asset to Employee</h3>
+              <p className="text-xs text-[#f1cc11] font-mono">Asset ID: {asset.assetId}</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
+            className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -275,9 +277,9 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
+                className="px-5 py-2 bg-[#003279] hover:bg-[#002254] disabled:opacity-50 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
               >
-                <Send className="w-3.5 h-3.5" />
+                <Send className="w-3.5 h-3.5 text-[#f1cc11]" />
                 {isSubmitting ? 'Recording...' : showConfirm ? 'Confirm & Issue Asset' : 'Proceed to Issue'}
               </button>
             </div>

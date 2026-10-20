@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Send, 
   Camera, 
   Search, 
   AlertCircle, 
-  ShieldAlert, 
-  User, 
-  Calendar, 
   CheckCircle2,
   Printer,
-  Boxes
+  Boxes,
+  Calendar,
+  User,
+  MapPin,
+  FileText,
+  Clock,
+  Sparkles
 } from 'lucide-react';
 import { Asset, AssetCondition, Employee, AssetTransaction } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
@@ -18,6 +21,7 @@ import { api } from '../services/api.js';
 interface IssueAssetViewProps {
   onOpenScanner: () => void;
   employees: Employee[];
+  allAssets?: Asset[];
   onIssueSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
   canManage: boolean;
@@ -26,6 +30,7 @@ interface IssueAssetViewProps {
 export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   onOpenScanner,
   employees,
+  allAssets = [],
   onIssueSuccess,
   onPrintVoucher,
   canManage
@@ -45,7 +50,10 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [completedTx, setCompletedTx] = useState<{ asset: Asset; transaction: AssetTransaction } | null>(null);
 
-  const sampleAvailable = ['WANG-ELE-002', 'WANG-ELE-003', 'WANG-FUR-001', 'WANG-COM-001'];
+  // Filter available assets
+  const availableAssets = useMemo(() => {
+    return allAssets.filter(a => a.status === 'Available');
+  }, [allAssets]);
 
   const handleLookup = async (idToLookup: string) => {
     const clean = idToLookup.trim().toUpperCase();
@@ -61,7 +69,9 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
       setAsset(res.asset);
       setCondition(res.asset.condition || 'Good');
       setLocation(res.asset.buildingRoom || '');
-      setSelectedEmpId(employees.length > 0 ? employees[0].employeeId : '');
+      if (employees.length > 0 && !selectedEmpId) {
+        setSelectedEmpId(employees[0].employeeId);
+      }
     } catch (err: any) {
       setAsset(null);
       setSearchError(err?.message || `No asset found with ID ${clean}`);
@@ -70,17 +80,30 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
     }
   };
 
+  const handleSelectPresetAsset = (selected: Asset) => {
+    setAsset(selected);
+    setAssetIdInput(selected.assetId);
+    setCondition(selected.condition || 'Good');
+    setLocation(selected.buildingRoom || '');
+    setSearchError(null);
+    setActionError(null);
+    setCompletedTx(null);
+    if (employees.length > 0 && !selectedEmpId) {
+      setSelectedEmpId(employees[0].employeeId);
+    }
+  };
+
   const handleIssueSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!asset) return;
 
     if (asset.status !== 'Available') {
-      setActionError(`Conflict: Asset is currently "${asset.status}". It cannot be issued.`);
+      setActionError(`Conflict: Asset is currently "${asset.status}". Only "Available" assets can be issued.`);
       return;
     }
 
     if (!selectedEmpId) {
-      setActionError('Please select a receiving employee.');
+      setActionError('Please select a receiving employee from the list.');
       return;
     }
 
@@ -110,280 +133,306 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   const selectedEmp = employees.find(e => e.employeeId === selectedEmpId);
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* View Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <Send className="w-5 h-5 text-emerald-700" />
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-              Barcode-Based Asset Issuing
-            </h1>
+    <div className="space-y-6 max-w-5xl">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[#003279] text-[#f1cc11] flex items-center justify-center font-bold shadow-xs">
+              <Send className="w-5 h-5 text-[#f1cc11]" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                Issue Asset to Staff
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  {availableAssets.length} Available
+                </span>
+              </h1>
+              <p className="text-xs text-slate-500">
+                Scan barcode label or pick an available asset, select employee, and generate official handover receipt.
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Scan physical asset barcode label to verify availability and record formal handover to employee.
-          </p>
-        </div>
 
-        <button
-          onClick={onOpenScanner}
-          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
-        >
-          <Camera className="w-4 h-4" />
-          Scan Barcode With Camera
-        </button>
+          <button
+            onClick={onOpenScanner}
+            className="px-4 py-2 bg-[#f1cc11] hover:bg-[#ddba09] text-[#003279] rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs"
+          >
+            <Camera className="w-4 h-4 stroke-[2.5]" />
+            <span>Scan Asset Barcode</span>
+          </button>
+        </div>
       </div>
 
-      {/* Role Check Warning */}
       {!canManage && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
           <span>
-            You are logged in with view-only or employee privileges. Switch to <strong>Inventory Manager</strong> or <strong>Super Admin</strong> to record issuance transactions.
+            You are logged in with view-only or employee privileges. Switch to <strong>Inventory Manager</strong> or <strong>Super Admin</strong> in the top-right menu to issue assets.
           </span>
         </div>
       )}
 
-      {/* Step 1: Scan / Enter Barcode */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-          Step 1: Scan or Enter Physical Barcode Asset ID
-        </label>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={assetIdInput}
-              onChange={(e) => setAssetIdInput(e.target.value.toUpperCase())}
-              placeholder="e.g. WANG-ELE-002 (or scan with camera)"
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono uppercase tracking-wide focus:bg-white focus:ring-2 focus:ring-slate-900"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => handleLookup(assetIdInput)}
-            disabled={loading || !assetIdInput.trim()}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
-          >
-            {loading ? 'Checking...' : 'Verify Asset'}
-          </button>
-        </div>
+      {/* Lookup & Quick Selector Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Search input & available assets selector */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4 space-y-3">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[#003279] flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" />
+              1. Search Asset By Barcode or ID
+            </h2>
 
-        {/* Quick simulator tags */}
-        <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
-          <span>Test available items:</span>
-          {sampleAvailable.map((id) => (
-            <button
-              key={id}
-              onClick={() => {
-                setAssetIdInput(id);
-                handleLookup(id);
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleLookup(assetIdInput);
               }}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 font-mono text-slate-800 rounded border border-slate-200"
+              className="flex gap-2"
             >
-              {id}
-            </button>
-          ))}
-        </div>
+              <input
+                type="text"
+                value={assetIdInput}
+                onChange={(e) => setAssetIdInput(e.target.value.toUpperCase())}
+                placeholder="e.g. WANG-ELE-002"
+                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono uppercase focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+              />
+              <button
+                type="submit"
+                disabled={loading || !assetIdInput.trim()}
+                className="px-4 py-2 bg-[#003279] hover:bg-[#002254] disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-colors"
+              >
+                {loading ? 'Searching...' : 'Lookup'}
+              </button>
+            </form>
 
-        {searchError && (
-          <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-            <span>{searchError}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Success Notification Banner with Voucher Print */}
-      {completedTx && (
-        <div className="bg-emerald-50 border-2 border-emerald-500 rounded-xl p-5 shadow-sm space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-6 h-6 text-emerald-700" />
-              <div>
-                <h3 className="font-bold text-emerald-950 text-sm">
-                  Asset Successfully Issued!
-                </h3>
-                <p className="text-xs text-emerald-800 font-mono">
-                  Transaction Ref: {completedTx.transaction.transactionId}
-                </p>
+            {searchError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{searchError}</span>
               </div>
-            </div>
-            <button
-              onClick={() => onPrintVoucher(completedTx.asset, completedTx.transaction)}
-              className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              Print Handover Voucher
-            </button>
+            )}
           </div>
-          <p className="text-xs text-emerald-900">
-            Custody of <strong>{completedTx.asset.itemName}</strong> ({completedTx.asset.assetId}) has been assigned to <strong>{completedTx.transaction.employeeName}</strong>. The employee's account and the master transaction log have been updated.
-          </p>
-        </div>
-      )}
 
-      {/* Step 2: Asset Details & Handover Form */}
-      {asset && !completedTx && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {/* Asset Verification Header */}
-          <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-mono font-bold text-slate-900 text-base">{asset.assetId}</span>
-                <span className={`text-xs px-2 py-0.5 rounded font-semibold border ${
-                  asset.status === 'Available' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-rose-50 text-rose-800 border-rose-300'
-                }`}>
-                  {asset.status}
-                </span>
-                <span className="text-xs text-slate-500 font-medium">Condition: {asset.condition}</span>
-              </div>
-              <h2 className="text-base font-bold text-slate-800">{asset.itemName}</h2>
-              <p className="text-xs text-slate-500">
-                {asset.categoryName} · {asset.brand} {asset.model} (Serial: {asset.serialNumber || 'N/A'})
-              </p>
+          {/* Quick Click Available Assets List */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-2.5">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Ready to Issue Assets ({availableAssets.length})
+              </h2>
+              <span className="text-[10px] text-slate-400">Click to load</span>
             </div>
 
-            <BarcodeBadge value={asset.assetId} height={36} width={1.5} />
+            {availableAssets.length === 0 ? (
+              <p className="text-xs text-slate-400 py-3 text-center">No assets currently in Available status.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                {availableAssets.map((avail) => (
+                  <button
+                    key={avail.assetId}
+                    type="button"
+                    onClick={() => handleSelectPresetAsset(avail)}
+                    className={`w-full text-left p-2.5 rounded-lg border transition-all text-xs flex items-center justify-between ${
+                      asset?.assetId === avail.assetId
+                        ? 'bg-[#003279]/5 border-[#003279] ring-1 ring-[#003279]'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold font-mono text-[#003279]">{avail.assetId}</div>
+                      <div className="text-slate-900 font-medium truncate max-w-[200px]">{avail.itemName}</div>
+                      <div className="text-[10px] text-slate-500">{avail.categoryName} · {avail.officeBranch}</div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      Select
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
 
-          {/* Conflict Warning if Asset is Unavailable */}
-          {asset.status !== 'Available' ? (
-            <div className="p-6">
-              <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-3">
-                <ShieldAlert className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
+        {/* Right: Selected Asset Preview & Handover Form */}
+        <div className="lg:col-span-7">
+          {asset ? (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {/* Asset Snapshot Header */}
+              <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-bold text-rose-950">Issuance Prevented: Asset is {asset.status}</h4>
-                  <p className="text-xs text-rose-800 mt-1">
-                    This asset cannot be issued because its current status is <strong>{asset.status}</strong>.
-                  </p>
-                  {asset.assignedTo && (
-                    <p className="text-xs text-rose-800 mt-1">
-                      Currently assigned to: <strong>{asset.assignedTo}</strong> ({asset.assignedEmployeeId}).
-                    </p>
-                  )}
-                  <p className="text-xs text-rose-700 mt-2">
-                    To prevent conflicting active assignments, please scan the barcode in the <strong>Return Asset</strong> section first.
-                  </p>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Selected Asset</span>
+                  <h3 className="font-bold text-slate-900 text-sm">{asset.itemName}</h3>
+                  <p className="font-mono text-xs font-bold text-[#003279]">{asset.assetId}</p>
+                </div>
+                <div className="text-right">
+                  <span className={`inline-block px-2.5 py-0.5 rounded text-xs font-bold ${
+                    asset.status === 'Available'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-rose-100 text-rose-800 border border-rose-300'
+                  }`}>
+                    {asset.status}
+                  </span>
+                  <div className="text-[10px] text-slate-500 mt-1">
+                    {asset.officeBranch}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            /* Active Issuance Form */
-            <form onSubmit={handleIssueSubmit} className="p-6 space-y-4">
-              {actionError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                  <span>{actionError}</span>
+
+              {/* Status conflict alert */}
+              {asset.status !== 'Available' && (
+                <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    Cannot issue: This asset is currently <strong>{asset.status}</strong> (Assigned to: {asset.assignedTo || 'N/A'}). It must be returned first.
+                  </span>
                 </div>
               )}
 
-              {/* Employee Selection */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Select Receiving Employee *
-                </label>
-                <select
-                  required
-                  value={selectedEmpId}
-                  onChange={(e) => setSelectedEmpId(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                >
-                  <option value="">-- Choose Registered WANG Employee --</option>
-                  {employees.map((emp) => (
-                    <option key={emp.employeeId} value={emp.employeeId}>
-                      {emp.fullName} ({emp.employeeId}) · {emp.designation} ({emp.department})
-                    </option>
-                  ))}
-                </select>
+              {/* Success Card with Print Voucher */}
+              {completedTx && (
+                <div className="p-4 bg-emerald-50 border-b border-emerald-200 text-emerald-950 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <h4 className="text-sm font-bold">Successfully Issued!</h4>
+                        <p className="text-xs text-emerald-800">
+                          Transaction ID: <span className="font-mono">{completedTx.transaction.transactionId}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onPrintVoucher(completedTx.asset, completedTx.transaction)}
+                      className="px-3 py-1.5 bg-[#003279] hover:bg-[#002254] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-[#f1cc11]" />
+                      <span>Print Handover Voucher</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                {selectedEmp && (
-                  <div className="mt-2 p-2.5 bg-blue-50/70 rounded border border-blue-100 text-[11px] text-blue-900">
-                    <span className="font-semibold">{selectedEmp.fullName}</span> · {selectedEmp.department} · {selectedEmp.officeBranch} (Currently holding {selectedEmp.assignedAssetCount} asset{selectedEmp.assignedAssetCount === 1 ? '' : 's'})
+              {/* Issue Form */}
+              <form onSubmit={handleIssueSubmit} className="p-5 space-y-4">
+                {actionError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{actionError}</span>
                   </div>
                 )}
-              </div>
 
-              {/* Condition & Return Due Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Receiving Employee */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Handover Condition *
+                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-[#003279]" />
+                    Assign To Employee *
                   </label>
                   <select
-                    value={condition}
-                    onChange={(e) => setCondition(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
+                    required
+                    value={selectedEmpId}
+                    onChange={(e) => setSelectedEmpId(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
                   >
-                    <option value="New">New</option>
-                    <option value="Good">Good</option>
-                    <option value="Fair">Fair</option>
-                    <option value="Minor Wear">Minor Wear</option>
+                    <option value="">-- Choose Employee --</option>
+                    {employees.map((emp) => (
+                      <option key={emp.employeeId} value={emp.employeeId}>
+                        {emp.fullName} ({emp.employeeId}) — {emp.designation} · {emp.department}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
+                {/* Handover Condition & Return Due Date */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Condition at Handover *
+                    </label>
+                    <select
+                      value={condition}
+                      onChange={(e) => setCondition(e.target.value as AssetCondition)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                    >
+                      <option value="New">New (Factory Sealed)</option>
+                      <option value="Good">Good (Operational & Clean)</option>
+                      <option value="Fair">Fair (Minor Cosmetic Wear)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-[#003279]" />
+                      Expected Return Due Date
+                    </label>
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                {/* Deployment Location / Room */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                    Scheduled Due Date (Optional)
+                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-[#003279]" />
+                    Deployment Room / Workstation
                   </label>
                   <input
-                    type="date"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="e.g. Room 101 - Executive Suite"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
                   />
                 </div>
-              </div>
 
-              {/* Deployment Location */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Assigned Desk / Office Room
-                </label>
-                <input
-                  type="text"
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="e.g. Room 204 - IT & Media Lab"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
+                {/* Handover Remarks */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-[#003279]" />
+                    Handover Notes & Accessories
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="e.g. Includes charger, laptop sleeve, wireless mouse, and original bag."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                  />
+                </div>
 
-              {/* Handover Purpose / Notes */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Handover Purpose & Remarks
-                </label>
-                <textarea
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Handed over for field GIS mapping project. Fully tested."
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
-
-              {/* Confirmation & Submit Button */}
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500">
-                  Transaction will be recorded in audit ledger immediately.
-                </span>
-
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !canManage}
-                  className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
-                >
-                  <Send className="w-4 h-4" />
-                  {isSubmitting ? 'Recording Handover...' : 'Confirm & Complete Handover'}
-                </button>
-              </div>
-            </form>
+                {/* Submit Button */}
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !canManage || asset.status !== 'Available'}
+                    className="w-full py-2.5 bg-[#003279] hover:bg-[#002254] disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 transition-all shadow-sm"
+                  >
+                    <Send className="w-4 h-4 text-[#f1cc11]" />
+                    <span>
+                      {isSubmitting 
+                        ? 'Recording Handover...' 
+                        : selectedEmp 
+                          ? `Confirm Handover to ${selectedEmp.fullName}` 
+                          : 'Issue Asset to Employee'}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl shadow-xs border border-dashed border-slate-300 p-12 text-center text-slate-400">
+              <Boxes className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-slate-700">No Asset Selected</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                Lookup an asset using barcode/ID on the left, or click any available item from the list to initiate the issue workflow.
+              </p>
+            </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

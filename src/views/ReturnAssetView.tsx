@@ -1,14 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   RotateCcw, 
   Camera, 
   Search, 
   AlertCircle, 
-  UserCheck, 
-  Wrench, 
   CheckCircle2, 
   Printer,
-  ShieldAlert
+  Boxes,
+  UserCheck,
+  Wrench,
+  MapPin,
+  FileText,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 import { Asset, AssetCondition, AssetTransaction } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
@@ -16,6 +20,7 @@ import { api } from '../services/api.js';
 
 interface ReturnAssetViewProps {
   onOpenScanner: () => void;
+  allAssets?: Asset[];
   onReturnSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
   canManage: boolean;
@@ -23,6 +28,7 @@ interface ReturnAssetViewProps {
 
 export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   onOpenScanner,
+  allAssets = [],
   onReturnSuccess,
   onPrintVoucher,
   canManage
@@ -40,7 +46,10 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [completedTx, setCompletedTx] = useState<{ asset: Asset; transaction: AssetTransaction } | null>(null);
 
-  const sampleIssued = ['WANG-ELE-001', 'WANG-IT-001', 'WANG-IT-002'];
+  // Filter issued assets currently in field
+  const issuedAssets = useMemo(() => {
+    return allAssets.filter(a => a.status === 'Issued');
+  }, [allAssets]);
 
   const handleLookup = async (idToLookup: string) => {
     const clean = idToLookup.trim().toUpperCase();
@@ -55,12 +64,23 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
       const res = await api.getAssetById(clean);
       setAsset(res.asset);
       setReturnCondition(res.asset.condition || 'Good');
+      setTargetLocation('Central Store - Bay A');
     } catch (err: any) {
       setAsset(null);
       setSearchError(err?.message || `No asset found with ID ${clean}`);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectPresetAsset = (selected: Asset) => {
+    setAsset(selected);
+    setAssetIdInput(selected.assetId);
+    setReturnCondition(selected.condition || 'Good');
+    setTargetLocation('Central Store - Bay A');
+    setSearchError(null);
+    setActionError(null);
+    setCompletedTx(null);
   };
 
   const handleReturnSubmit = async (e: React.FormEvent) => {
@@ -96,263 +116,286 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   const willBeUnderMaintenance = returnCondition === 'Needs Repair' || returnCondition === 'Damaged';
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* View Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2">
-            <RotateCcw className="w-5 h-5 text-blue-700" />
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-              Barcode-Based Asset Returns
-            </h1>
+    <div className="space-y-6 max-w-5xl">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[#003279] text-[#f1cc11] flex items-center justify-center font-bold shadow-xs">
+              <RotateCcw className="w-5 h-5 text-[#f1cc11]" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                Process Asset Return & Check-in
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-[#003279] border border-blue-200">
+                  {issuedAssets.length} Currently Checked Out
+                </span>
+              </h1>
+              <p className="text-xs text-slate-500">
+                Discharge staff custody, assess condition upon return, and put asset back into available inventory or maintenance.
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Scan asset barcode label on return to identify responsible employee, assess condition, and discharge custody.
-          </p>
-        </div>
 
-        <button
-          onClick={onOpenScanner}
-          className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
-        >
-          <Camera className="w-4 h-4" />
-          Scan Return Barcode
-        </button>
+          <button
+            onClick={onOpenScanner}
+            className="px-4 py-2 bg-[#f1cc11] hover:bg-[#ddba09] text-[#003279] rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs"
+          >
+            <Camera className="w-4 h-4 stroke-[2.5]" />
+            <span>Scan Return Barcode</span>
+          </button>
+        </div>
       </div>
 
       {!canManage && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
           <span>
-            You are logged in with view-only or employee privileges. Switch to <strong>Inventory Manager</strong> or <strong>Super Admin</strong> to discharge assets and process returns.
+            You are logged in with view-only or employee privileges. Switch to <strong>Inventory Manager</strong> or <strong>Super Admin</strong> in the top-right menu to process returns.
           </span>
         </div>
       )}
 
-      {/* Step 1: Scan / Enter Barcode */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-          Step 1: Scan Return Barcode or Enter Asset ID
-        </label>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={assetIdInput}
-              onChange={(e) => setAssetIdInput(e.target.value.toUpperCase())}
-              placeholder="e.g. WANG-ELE-001 (or scan label directly)"
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono uppercase tracking-wide focus:bg-white focus:ring-2 focus:ring-slate-900"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => handleLookup(assetIdInput)}
-            disabled={loading || !assetIdInput.trim()}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
-          >
-            {loading ? 'Verifying...' : 'Identify Return Item'}
-          </button>
-        </div>
+      {/* Grid: Search & Issued Asset Quick Picker */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Search input & Currently Issued List */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4 space-y-3">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[#003279] flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" />
+              1. Scan or Type Asset ID to Return
+            </h2>
 
-        {/* Quick simulator tags for currently issued assets */}
-        <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
-          <span>Test currently issued items:</span>
-          {sampleIssued.map((id) => (
-            <button
-              key={id}
-              onClick={() => {
-                setAssetIdInput(id);
-                handleLookup(id);
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleLookup(assetIdInput);
               }}
-              className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-900 font-mono text-[11px] rounded border border-blue-200"
+              className="flex gap-2"
             >
-              {id}
-            </button>
-          ))}
-        </div>
+              <input
+                type="text"
+                value={assetIdInput}
+                onChange={(e) => setAssetIdInput(e.target.value.toUpperCase())}
+                placeholder="e.g. WANG-ELE-001"
+                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono uppercase focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+              />
+              <button
+                type="submit"
+                disabled={loading || !assetIdInput.trim()}
+                className="px-4 py-2 bg-[#003279] hover:bg-[#002254] disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-colors"
+              >
+                {loading ? 'Finding...' : 'Lookup'}
+              </button>
+            </form>
 
-        {searchError && (
-          <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-            <span>{searchError}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Success Notification Banner with Voucher Print */}
-      {completedTx && (
-        <div className="bg-blue-50 border-2 border-blue-500 rounded-xl p-5 shadow-sm space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-6 h-6 text-blue-700" />
-              <div>
-                <h3 className="font-bold text-blue-950 text-sm">
-                  Asset Return Processed & Custody Discharged!
-                </h3>
-                <p className="text-xs text-blue-800 font-mono">
-                  Transaction Ref: {completedTx.transaction.transactionId}
-                </p>
+            {searchError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{searchError}</span>
               </div>
-            </div>
-            <button
-              onClick={() => onPrintVoucher(completedTx.asset, completedTx.transaction)}
-              className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              Print Return Voucher
-            </button>
+            )}
           </div>
-          <p className="text-xs text-blue-900">
-            <strong>{completedTx.asset.itemName}</strong> ({completedTx.asset.assetId}) has been returned. Status is now <strong>{completedTx.asset.status}</strong>. It has been removed from the employee's active assignment account while preserving complete historical audit logs.
-          </p>
-        </div>
-      )}
 
-      {/* Step 2: Return Verification & Discharge Form */}
-      {asset && !completedTx && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {/* Header */}
-          <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-mono font-bold text-slate-900 text-base">{asset.assetId}</span>
-                <span className={`text-xs px-2 py-0.5 rounded font-semibold border ${
-                  asset.status === 'Issued' ? 'bg-blue-50 text-blue-800 border-blue-300' : 'bg-slate-100 text-slate-800 border-slate-300'
-                }`}>
-                  {asset.status}
-                </span>
-              </div>
-              <h2 className="text-base font-bold text-slate-800">{asset.itemName}</h2>
-              <p className="text-xs text-slate-500">
-                {asset.categoryName} · {asset.brand} {asset.model} (Serial: {asset.serialNumber || 'N/A'})
-              </p>
+          {/* Quick Click Currently Issued Assets */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-2.5">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Currently Issued Items ({issuedAssets.length})
+              </h2>
+              <span className="text-[10px] text-slate-400">Click to return</span>
             </div>
 
-            <BarcodeBadge value={asset.assetId} height={36} width={1.5} />
+            {issuedAssets.length === 0 ? (
+              <p className="text-xs text-slate-400 py-3 text-center">No assets are currently issued to staff.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                {issuedAssets.map((iss) => (
+                  <button
+                    key={iss.assetId}
+                    type="button"
+                    onClick={() => handleSelectPresetAsset(iss)}
+                    className={`w-full text-left p-2.5 rounded-lg border transition-all text-xs flex items-center justify-between ${
+                      asset?.assetId === iss.assetId
+                        ? 'bg-[#003279]/5 border-[#003279] ring-1 ring-[#003279]'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold font-mono text-[#003279]">{iss.assetId}</div>
+                      <div className="text-slate-900 font-medium truncate max-w-[200px]">{iss.itemName}</div>
+                      <div className="text-[10px] text-slate-600 font-semibold mt-0.5">
+                        Custodian: {iss.assignedTo} ({iss.assignedEmployeeId})
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-[#003279]">
+                      Select
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
 
-          {/* Validation: Check if Asset is actually issued */}
-          {asset.status !== 'Issued' ? (
-            <div className="p-6">
-              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3">
-                <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+        {/* Right: Selected Asset Return Form */}
+        <div className="lg:col-span-7">
+          {asset ? (
+            <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+              {/* Asset Snapshot Header */}
+              <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-bold text-amber-950">Asset Is Not Currently Issued</h4>
-                  <p className="text-xs text-amber-800 mt-1">
-                    Asset <strong>{asset.assetId}</strong> is currently in status: <strong>{asset.status}</strong>.
-                  </p>
-                  <p className="text-xs text-amber-700 mt-1">
-                    Only assets with status "Issued" and an active employee custodian can be returned.
-                  </p>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Asset to Return</span>
+                  <h3 className="font-bold text-slate-900 text-sm">{asset.itemName}</h3>
+                  <p className="font-mono text-xs font-bold text-[#003279]">{asset.assetId}</p>
+                </div>
+                <div className="text-right">
+                  <span className={`inline-block px-2.5 py-0.5 rounded text-xs font-bold ${
+                    asset.status === 'Issued'
+                      ? 'bg-blue-100 text-[#003279] border border-blue-200'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  }`}>
+                    {asset.status}
+                  </span>
+                  {asset.assignedTo && (
+                    <div className="text-[11px] font-semibold text-slate-700 mt-1">
+                      Held by: {asset.assignedTo}
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          ) : (
-            <form onSubmit={handleReturnSubmit} className="p-6 space-y-5">
-              {actionError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                  <span>{actionError}</span>
+
+              {/* Status check warning */}
+              {asset.status !== 'Issued' && (
+                <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    Notice: This asset is currently in <strong>{asset.status}</strong> status. Only "Issued" assets have an active employee handover to discharge.
+                  </span>
                 </div>
               )}
 
-              {/* Active Custodian Verification Box */}
-              <div className="p-4 bg-blue-50/70 rounded-lg border border-blue-200 text-xs space-y-1.5">
-                <div className="flex items-center gap-1.5 text-blue-950 font-bold text-xs uppercase tracking-wider">
-                  <UserCheck className="w-4 h-4 text-blue-700" />
-                  Active Custodian Record
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                  <div>
-                    <span className="text-blue-700 text-[11px] block">Responsible Employee:</span>
-                    <span className="font-bold text-slate-900 text-sm">{asset.assignedTo}</span>
-                    <span className="text-slate-500 block font-mono text-[11px]">ID: {asset.assignedEmployeeId}</span>
-                  </div>
-                  <div>
-                    <span className="text-blue-700 text-[11px] block">Current Location:</span>
-                    <span className="font-medium text-slate-900">{asset.officeBranch}</span>
-                    <span className="text-slate-600 block text-[11px]">{asset.buildingRoom}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Condition Assessment */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Return Physical Condition Assessment *
-                </label>
-                <select
-                  value={returnCondition}
-                  onChange={(e) => setReturnCondition(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                >
-                  <option value="Good">Good — Normal condition, ready for reissuance</option>
-                  <option value="Minor Wear">Minor Wear — Working fine, cosmetic wear only</option>
-                  <option value="Needs Repair">Needs Repair — Faulty/malfunctioning, requires servicing</option>
-                  <option value="Damaged">Damaged — Physical damage or breakage, requires overhaul</option>
-                </select>
-
-                {willBeUnderMaintenance && (
-                  <div className="mt-2 p-2.5 bg-amber-50 rounded border border-amber-300 text-[11px] text-amber-900 flex items-start gap-2">
-                    <Wrench className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                    <div>
-                      <strong>Automated Maintenance Workflow Triggered</strong>
-                      <p className="mt-0.5">
-                        Because condition is assessed as "{returnCondition}", the asset will automatically transition to <strong>Under Maintenance</strong> instead of Available, and an inspection maintenance ticket will be filed.
-                      </p>
+              {/* Completed Return Voucher */}
+              {completedTx && (
+                <div className="p-4 bg-emerald-50 border-b border-emerald-200 text-emerald-950 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <h4 className="text-sm font-bold">Asset Successfully Returned & Discharged!</h4>
+                        <p className="text-xs text-emerald-800">
+                          Transaction ID: <span className="font-mono">{completedTx.transaction.transactionId}</span>
+                        </p>
+                      </div>
                     </div>
+                    <button
+                      onClick={() => onPrintVoucher(completedTx.asset, completedTx.transaction)}
+                      className="px-3 py-1.5 bg-[#003279] hover:bg-[#002254] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-[#f1cc11]" />
+                      <span>Print Return Voucher</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Return Form */}
+              <form onSubmit={handleReturnSubmit} className="p-5 space-y-4">
+                {actionError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{actionError}</span>
                   </div>
                 )}
-              </div>
 
-              {/* Target Location */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Return Storage Location / Rack
-                </label>
-                <input
-                  type="text"
-                  value={targetLocation}
-                  onChange={(e) => setTargetLocation(e.target.value)}
-                  placeholder="e.g. Central Store - Bay A, Shelf 1"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
+                {/* Return Condition */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Inspected Condition Upon Return *
+                  </label>
+                  <select
+                    value={returnCondition}
+                    onChange={(e) => setReturnCondition(e.target.value as AssetCondition)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                  >
+                    <option value="Good">Good — Ready for immediate reissue</option>
+                    <option value="New">New / Like-New</option>
+                    <option value="Fair">Fair — Usable with minor cosmetic wear</option>
+                    <option value="Needs Repair">Needs Repair — Auto-route to Maintenance</option>
+                    <option value="Damaged">Damaged — Auto-route to Maintenance</option>
+                  </select>
 
-              {/* Notes */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Return Inspection Remarks & Observations
-                </label>
-                <textarea
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Equipment returned with all cables and accessories. Power tested and verified."
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
+                  {willBeUnderMaintenance && (
+                    <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs flex items-center gap-2">
+                      <Wrench className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        Asset will be automatically marked as <strong>"Under Maintenance"</strong> and logged in the maintenance register for service.
+                      </span>
+                    </div>
+                  )}
+                </div>
 
-              {/* Submit */}
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500">
-                  Custody will be discharged from {asset.assignedTo}.
-                </span>
+                {/* Storage Return Location */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-[#003279]" />
+                    Storage Location / Bay *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={targetLocation}
+                    onChange={(e) => setTargetLocation(e.target.value)}
+                    placeholder="e.g. Central Store - Bay A"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                  />
+                </div>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !canManage}
-                  className="px-6 py-2.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  {isSubmitting ? 'Processing Return...' : 'Confirm Return & Discharge Custody'}
-                </button>
-              </div>
-            </form>
+                {/* Return Remarks */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-[#003279]" />
+                    Inspection Remarks & Notes
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="e.g. Returned with all cables and accessories. Physical condition verified."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                  />
+                </div>
+
+                {/* Submit Return */}
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !canManage || asset.status !== 'Issued'}
+                    className="w-full py-2.5 bg-[#003279] hover:bg-[#002254] disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 transition-all shadow-sm"
+                  >
+                    <RotateCcw className="w-4 h-4 text-[#f1cc11]" />
+                    <span>
+                      {isSubmitting 
+                        ? 'Processing Return...' 
+                        : asset.assignedTo
+                          ? `Discharge Custody from ${asset.assignedTo} & Check In` 
+                          : 'Process Return'}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl shadow-xs border border-dashed border-slate-300 p-12 text-center text-slate-400">
+              <Boxes className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-slate-700">No Asset Selected for Return</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                Scan the return barcode label or click any checked-out asset on the left to review its custodian and process return.
+              </p>
+            </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

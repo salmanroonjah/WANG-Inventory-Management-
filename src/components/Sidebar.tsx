@@ -83,7 +83,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Missing & Overdue', 
       icon: AlertTriangle, 
       badge: (counts?.missingLost || 0) + (counts?.overdue || 0),
-      badgeColor: 'bg-rose-100 text-rose-800',
+      badgeColor: 'bg-rose-500 text-white',
       employeeAllowed: false, 
       section: 'Operations' 
     },
@@ -95,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Consumable Stock', 
       icon: PackageCheck, 
       badge: counts?.lowStock,
-      badgeColor: 'bg-amber-100 text-amber-800',
+      badgeColor: 'bg-[#f1cc11] text-[#003279] font-bold',
       employeeAllowed: true, 
       section: 'Inventory & Stock' 
     },
@@ -109,7 +109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Asset Requests', 
       icon: ClipboardList, 
       badge: counts?.pendingRequests,
-      badgeColor: 'bg-blue-100 text-blue-800',
+      badgeColor: 'bg-blue-400 text-[#003279] font-bold',
       employeeAllowed: true, 
       section: 'Organization' 
     },
@@ -131,17 +131,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ? navItems.filter(item => item.employeeAllowed)
     : navItems;
 
-  // Group by section
   const sections = Array.from(new Set(visibleItems.map(i => i.section)));
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-slate-900 text-slate-300">
+    <div className="flex flex-col h-full bg-[#001e48] text-slate-200">
       {/* Mobile Header */}
-      <div className="p-4 border-b border-slate-800 flex md:hidden items-center justify-between">
+      <div className="p-4 border-b border-[#002e6b] flex md:hidden items-center justify-between">
         <span className="font-bold text-white text-sm">WANG Navigation</span>
         <button
           onClick={onCloseMobile}
-          className="p-1 text-slate-400 hover:text-white rounded"
+          className="p-1 text-white/70 hover:text-white rounded"
         >
           <X className="w-5 h-5" />
         </button>
@@ -151,10 +150,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
         {sections.map((sectionName) => (
           <div key={sectionName}>
-            <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+            <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-[#f1cc11]/90 block mb-1.5">
               {sectionName}
             </span>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {visibleItems
                 .filter(item => item.section === sectionName)
                 .map((item) => {
@@ -164,18 +163,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       key={item.id}
                       onClick={() => handleItemClick(item.id)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
                         isActive
-                          ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          ? 'bg-[#003279] text-white font-bold border-l-4 border-[#f1cc11] shadow-sm'
+                          : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium'
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                        <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#f1cc11]' : 'text-slate-400'}`} />
                         <span>{item.label}</span>
                       </div>
                       {item.badge && item.badge > 0 ? (
-                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${item.badgeColor || 'bg-slate-700 text-white'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${item.badgeColor || 'bg-white/20 text-white'}`}>
                           {item.badge}
                         </span>
                       ) : null}
@@ -188,13 +187,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer Info */}
-      <div className="p-3 border-t border-slate-800 text-[11px] text-slate-400">
+      <div className="p-3 border-t border-[#002e6b] bg-[#001738] text-[11px] text-slate-300">
         <div className="flex items-center justify-between">
-          <span>Active Role:</span>
-          <span className="font-semibold text-emerald-400">{userRole}</span>
+          <span className="text-white/70">Role:</span>
+          <span className="font-bold text-[#f1cc11]">{userRole}</span>
         </div>
-        <p className="text-[10px] text-slate-400 mt-1">
-          Barcodes: Code 128 Standard
+        <p className="text-[10px] text-white/50 mt-1">
+          WANG Asset Management System
         </p>
       </div>
     </div>
@@ -203,7 +202,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* Desktop Persistent Sidebar */}
-      <aside className="hidden md:block w-64 shrink-0 border-r border-slate-800 h-[calc(100vh-3.5rem)] sticky top-14">
+      <aside className="hidden md:block w-64 shrink-0 border-r border-[#002e6b] h-[calc(100vh-3.5rem)] sticky top-14">
         {sidebarContent}
       </aside>
 

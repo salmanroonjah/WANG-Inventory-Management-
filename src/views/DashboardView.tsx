@@ -31,51 +31,59 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="bg-slate-900 text-white rounded-2xl p-6 sm:p-8 shadow-md relative overflow-hidden">
+      <div className="bg-gradient-to-r from-[#003279] via-[#002863] to-[#001a40] text-white rounded-2xl p-6 sm:p-8 shadow-md relative overflow-hidden border-b-4 border-[#f1cc11]">
         <div className="relative z-10 max-w-2xl">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 font-mono">
-              Operational Master Dashboard
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#f1cc11] font-mono">
+              Official Inventory Control System
             </span>
-            <span className="text-slate-500">·</span>
-            <span className="text-xs text-slate-300">Welfare Association for New Generation</span>
+            <span className="text-white/40">·</span>
+            <span className="text-xs text-white/80">Welfare Association for New Generation</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            WANG Office Inventory Control
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+            WANG Asset & Stock Management
           </h1>
-          <p className="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
-            Barcode-managed asset tracking, issue and return ledger, consumable stock, and real-time Google Sheets transaction synchronization.
+          <p className="text-xs sm:text-sm text-white/85 mt-2 leading-relaxed">
+            Barcode-managed asset tracking, issue and return ledger, master registry, and safe data synchronization.
           </p>
 
           <div className="flex flex-wrap items-center gap-3 mt-6">
             <button
               onClick={onOpenScanner}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-all shadow-md active:scale-95"
+              className="px-5 py-2.5 bg-[#f1cc11] hover:bg-[#ddba09] text-[#003279] rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md active:scale-95"
             >
-              <Camera className="w-4 h-4" />
-              Launch Barcode Scanner
+              <Camera className="w-4 h-4 stroke-[2.5]" />
+              Scan Barcode Label
             </button>
 
             <button
               onClick={() => onNavigate('issue')}
-              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-slate-700"
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20"
             >
-              <Send className="w-4 h-4 text-emerald-400" />
+              <Send className="w-4 h-4 text-[#f1cc11]" />
               Issue Asset
             </button>
 
             <button
               onClick={() => onNavigate('return')}
-              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-slate-700"
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20"
             >
-              <RotateCcw className="w-4 h-4 text-blue-400" />
+              <RotateCcw className="w-4 h-4 text-white" />
               Return Asset
+            </button>
+
+            <button
+              onClick={() => onNavigate('inventory')}
+              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20"
+            >
+              <Boxes className="w-4 h-4 text-[#f1cc11]" />
+              Master Register
             </button>
           </div>
         </div>
 
         {/* Ambient watermark background */}
-        <div className="absolute -right-10 -bottom-10 opacity-5 pointer-events-none select-none text-white text-9xl font-black font-mono">
+        <div className="absolute -right-8 -bottom-10 opacity-10 pointer-events-none select-none text-white text-9xl font-black font-mono">
           WANG
         </div>
       </div>

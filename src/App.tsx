@@ -181,6 +181,16 @@ export default function App() {
     setVoucherData({ asset: updatedAsset, transaction });
   };
 
+  const handleDeleteAsset = async (assetId: string) => {
+    try {
+      await api.deleteAsset(assetId);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to delete asset:', err);
+      alert(err?.message || 'Failed to delete asset.');
+    }
+  };
+
   const handleSwitchRole = async (role: UserRole) => {
     try {
       const updatedUser = await api.switchRole(role);
@@ -258,10 +268,10 @@ export default function App() {
             {currentTab === 'issue' && (
               <IssueAssetView
                 onOpenScanner={() => handleOpenScanner((id) => {
-                  // Direct lookup on scan
                   setCurrentTab('issue');
                 }, 'Scan Asset to Issue')}
                 employees={employees}
+                allAssets={assets}
                 onIssueSuccess={handleIssueSuccess}
                 onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
                 canManage={canManage}
@@ -273,6 +283,7 @@ export default function App() {
                 onOpenScanner={() => handleOpenScanner((id) => {
                   setCurrentTab('return');
                 }, 'Scan Returning Asset')}
+                allAssets={assets}
                 onReturnSuccess={handleReturnSuccess}
                 onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
                 canManage={canManage}
@@ -289,6 +300,8 @@ export default function App() {
                 onOpenEditModal={(a) => setEditModalAsset(a)}
                 onOpenIssueModal={(a) => setIssueModalAsset(a)}
                 onOpenReturnModal={(a) => setReturnModalAsset(a)}
+                onDeleteAsset={handleDeleteAsset}
+                onRefreshData={loadData}
                 canManage={canManage}
               />
             )}
@@ -465,6 +478,7 @@ export default function App() {
         assetToEdit={editModalAsset}
         categories={categories}
         locations={locations}
+        existingAssets={assets}
         onSuccess={() => loadData()}
       />
 

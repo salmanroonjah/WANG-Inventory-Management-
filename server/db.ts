@@ -1448,6 +1448,34 @@ class Database {
     return { success: true, message: `Asset ${asset.assetId} updated.`, asset };
   }
 
+  /**
+   * DELETE ASSET
+   * Removes asset record and logs activity.
+   */
+  public deleteAsset(assetId: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const cleanId = assetId.trim().toUpperCase();
+    const index = this.data.assets.findIndex(a => a.assetId.toUpperCase() === cleanId);
+    if (index === -1) {
+      return { success: false, message: `Asset "${cleanId}" not found.` };
+    }
+
+    const removed = this.data.assets[index];
+    this.data.assets.splice(index, 1);
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_ASSET',
+      recordType: 'Asset',
+      recordId: cleanId,
+      details: `Asset removed from registry: ${removed.itemName} (${removed.assetId})`
+    });
+
+    this.saveData();
+    return { success: true, message: `Asset ${cleanId} permanently deleted.` };
+  }
+
   // --- Consumables Transactions ---
   public adjustConsumableStock(params: {
     itemCode: string;
