@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "Asset": {
+      "title": "Asset",
+      "description": "Fixed asset in the WANG inventory register",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "itemName": { "type": "string" },
+        "brand": { "type": "string" },
+        "model": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "purchaseDate": { "type": "string" },
+        "purchaseCost": { "type": "number" },
+        "supplier": { "type": "string" },
+        "officeBranch": { "type": "string" },
+        "buildingRoom": { "type": "string" },
+        "assignedEmployeeId": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "condition": { "type": "string" },
+        "status": { "type": "string" },
+        "warrantyExpiry": { "type": "string" },
+        "invoiceDocLink": { "type": "string" },
+        "remarks": { "type": "string" },
+        "recordCompletion": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastUpdated": { "type": "string" },
+        "dueDate": { "type": "string" }
+      },
+      "required": ["assetId", "itemName", "status", "condition"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee or administrator profile in WANG organization",
+      "type": "object",
+      "properties": {
+        "employeeId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "department": { "type": "string" },
+        "designation": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "officeBranch": { "type": "string" },
+        "activeStatus": { "type": "boolean" },
+        "assignedAssetCount": { "type": "number" },
+        "role": { "type": "string" }
+      },
+      "required": ["employeeId", "fullName", "department"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Asset classification category",
+      "type": "object",
+      "properties": {
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "description": { "type": "string" },
+        "totalAssets": { "type": "number" }
+      },
+      "required": ["categoryId", "categoryName"]
+    },
+    "LocationRecord": {
+      "title": "LocationRecord",
+      "description": "Office room or storage facility",
+      "type": "object",
+      "properties": {
+        "locationId": { "type": "string" },
+        "officeBranch": { "type": "string" },
+        "building": { "type": "string" },
+        "floor": { "type": "string" },
+        "room": { "type": "string" },
+        "description": { "type": "string" },
+        "isStore": { "type": "boolean" },
+        "assetCount": { "type": "number" }
+      },
+      "required": ["locationId", "officeBranch", "room"]
+    },
+    "ConsumableItem": {
+      "title": "ConsumableItem",
+      "description": "Stock inventory item with consumable quantity",
+      "type": "object",
+      "properties": {
+        "itemCode": { "type": "string" },
+        "itemName": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "currentStock": { "type": "number" },
+        "minimumThreshold": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "location": { "type": "string" },
+        "supplier": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["itemCode", "itemName", "currentStock"]
+    },
+    "AssetTransaction": {
+      "title": "AssetTransaction",
+      "description": "Transaction log entry for issue, return, or status change",
+      "type": "object",
+      "properties": {
+        "transactionId": { "type": "string" },
+        "assetId": { "type": "string" },
+        "assetName": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "transactionType": { "type": "string" },
+        "performedByUserId": { "type": "string" },
+        "performedByName": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "previousStatus": { "type": "string" },
+        "newStatus": { "type": "string" },
+        "condition": { "type": "string" },
+        "notes": { "type": "string" },
+        "dueDate": { "type": "string" }
+      },
+      "required": ["transactionId", "assetId", "transactionType", "timestamp"]
+    },
+    "AssetRequest": {
+      "title": "AssetRequest",
+      "description": "Staff requisition request for new asset or consumable",
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" },
+        "requestNumber": { "type": "string" },
+        "requestingEmployeeId": { "type": "string" },
+        "requestingEmployeeName": { "type": "string" },
+        "department": { "type": "string" },
+        "itemType": { "type": "string" },
+        "itemDescription": { "type": "string" },
+        "quantity": { "type": "number" },
+        "businessJustification": { "type": "string" },
+        "requestDate": { "type": "string" },
+        "requiredDate": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["requestId", "requestNumber", "status"]
+    },
+    "MaintenanceRecord": {
+      "title": "MaintenanceRecord",
+      "description": "Maintenance and repair service entry",
+      "type": "object",
+      "properties": {
+        "maintenanceId": { "type": "string" },
+        "assetId": { "type": "string" },
+        "assetName": { "type": "string" },
+        "issueDescription": { "type": "string" },
+        "reportedDate": { "type": "string" },
+        "serviceProvider": { "type": "string" },
+        "repairCost": { "type": "number" },
+        "workPerformed": { "type": "string" },
+        "status": { "type": "string" },
+        "warrantyStatus": { "type": "string" },
+        "reportedBy": { "type": "string" }
+      },
+      "required": ["maintenanceId", "assetId", "issueDescription"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System administrative audit trail record",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "action": { "type": "string" },
+        "recordType": { "type": "string" },
+        "recordId": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["logId", "timestamp", "action"]
+    }
+  },
+  "firestore": {
+    "/assets/{assetId}": {
+      "schema": "Asset",
+      "description": "Fixed assets catalog and live custody status"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "WANG staff and administrators directory"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Asset categorization taxonomy"
+    },
+    "/locations/{locationId}": {
+      "schema": "LocationRecord",
+      "description": "Office branches and physical room facilities"
+    },
+    "/consumables/{itemCode}": {
+      "schema": "ConsumableItem",
+      "description": "Office supply consumable stock inventory"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "AssetTransaction",
+      "description": "Historical custody and status change ledger"
+    },
+    "/requests/{requestId}": {
+      "schema": "AssetRequest",
+      "description": "Asset acquisition and checkout requests"
+    },
+    "/maintenance/{maintenanceId}": {
+      "schema": "MaintenanceRecord",
+      "description": "Equipment servicing and repair tracking"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Organization audit logs for administrative operations"
+    }
+  }
+}

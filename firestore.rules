@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 100;
+    }
+
+    match /assets/{assetId} {
+      allow read: if true;
+      allow write: if isValidId(assetId);
+    }
+
+    match /employees/{employeeId} {
+      allow read: if true;
+      allow write: if isValidId(employeeId);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isValidId(categoryId);
+    }
+
+    match /locations/{locationId} {
+      allow read: if true;
+      allow write: if isValidId(locationId);
+    }
+
+    match /consumables/{itemCode} {
+      allow read: if true;
+      allow write: if isValidId(itemCode);
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if true;
+      allow write: if isValidId(transactionId);
+    }
+
+    match /requests/{requestId} {
+      allow read: if true;
+      allow write: if isValidId(requestId);
+    }
+
+    match /maintenance/{maintenanceId} {
+      allow read: if true;
+      allow write: if isValidId(maintenanceId);
+    }
+
+    match /audits/{auditId} {
+      allow read: if true;
+      allow write: if isValidId(auditId);
+    }
+
+    match /activityLogs/{logId} {
+      allow read: if true;
+      allow write: if isValidId(logId);
+    }
+
+    match /systemSettings/{docId} {
+      allow read: if true;
+      allow write: if isValidId(docId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

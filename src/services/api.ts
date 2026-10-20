@@ -16,6 +16,29 @@ import {
   UserSession, 
   UserRole 
 } from '../types/inventory.js';
+import { 
+  initFirestoreIfEmpty,
+  fetchAllAssetsFromFirestore,
+  saveAssetToFirestore,
+  deleteAssetFromFirestore,
+  fetchAllEmployeesFromFirestore,
+  saveEmployeeToFirestore,
+  deleteEmployeeFromFirestore,
+  fetchTransactionsFromFirestore,
+  saveTransactionToFirestore,
+  fetchConsumablesFromFirestore,
+  saveConsumableToFirestore,
+  fetchCategoriesFromFirestore,
+  fetchLocationsFromFirestore,
+  fetchRequestsFromFirestore,
+  saveRequestToFirestore,
+  fetchMaintenanceFromFirestore,
+  saveMaintenanceToFirestore,
+  fetchActivityLogsFromFirestore,
+  saveActivityLogToFirestore,
+  fetchUserFromFirestore,
+  saveUserToFirestore
+} from './firestoreDb.js';
 
 const BASE_URL = '/api';
 
@@ -400,6 +423,8 @@ function saveLocalStore(data: any) {
 
 const isStaticHosting = typeof window !== 'undefined' && (
   window.location.hostname.endsWith('github.io') || 
+  window.location.hostname.endsWith('pages.dev') ||
+  window.location.hostname.includes('cloudflare') ||
   window.location.protocol === 'file:'
 );
 
@@ -471,6 +496,14 @@ export const api = {
   async getCurrentUser(): Promise<UserSession> {
     const data = await safeFetch<{ success: boolean; user: UserSession }>('/auth/current-user');
     if (data && data.success) return data.user;
+    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
+    const fireUser = await fetchUserFromFirestore();
+    if (fireUser) {
+      const store = getLocalStore();
+      store.user = fireUser;
+      saveLocalStore(store);
+      return fireUser;
+    }
     return getLocalStore().user;
   },
 
@@ -493,6 +526,7 @@ export const api = {
       store.user.officeBranch = target.officeBranch;
     }
     saveLocalStore(store);
+    saveUserToFirestore(store.user).catch(() => {});
     return store.user;
   },
 
@@ -560,7 +594,17 @@ export const api = {
     }
     const data = await safeFetch<{ success: boolean; assets: Asset[] }>(`/assets?${query.toString()}`);
     if (data && data.success) return data.assets;
-    let list: Asset[] = getLocalStore().assets;
+
+    // Check Cloud Firestore for live multi-device sync
+    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
+    const cloudAssets = await fetchAllAssetsFromFirestore();
+    let list: Asset[] = cloudAssets && cloudAssets.length > 0 ? cloudAssets : getLocalStore().assets;
+    if (cloudAssets && cloudAssets.length > 0) {
+      const store = getLocalStore();
+      store.assets = cloudAssets;
+      saveLocalStore(store);
+    }
+
     if (filters) {
       if (filters.search) {
         const q = filters.search.trim().toLowerCase();
@@ -592,7 +636,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(asset)
     });
-    if (data && data.success) return data;
     const store = getLocalStore();
     const newAsset: Asset = {
       assetId: asset.assetId!.toUpperCase(),
@@ -622,6 +665,8 @@ export const api = {
     };
     store.assets.push(newAsset);
     saveLocalStore(store);
+    saveAssetToFirestore(newAsset).catch(() => {});
+    if (data && data.success) return data;
     return { asset: newAsset, message: 'Asset registered successfully' };
   },
 
@@ -631,12 +676,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
     });
-    if (data && data.success) return data;
     const store = getLocalStore();
     const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === id.toUpperCase());
+    if (asset) {
+      Object.assign(asset, updates, { lastUpdated: new Date().toISOString() });
+      saveLocalStore(store);
+      saveAssetToFirestore(asset).catch(() => {});
+    }
+    if (data && data.success) return data;
     if (!asset) throw new Error('Asset not found');
-    Object.assign(asset, updates, { lastUpdated: new Date().toISOString() });
-    saveLocalStore(store);
     return { asset, message: 'Asset updated successfully' };
   },
 
@@ -645,7 +693,8 @@ export const api = {
     const data = await safeFetch<{ success: boolean; message: string }>(`/assets/${encodeURIComponent(cleanId)}`, {
       method: 'DELETE'
     });
-    // Always sync local store for offline & Cloudflare/GitHub Pages
+    // Always sync local store & Cloud Firestore
+    deleteAssetFromFirestore(cleanId).catch(() => {});
     const store = getLocalStore();
     const idx = store.assets.findIndex((a: any) => a.assetId.toUpperCase() === cleanId);
     if (idx !== -1) {
@@ -729,6 +778,8 @@ export const api = {
     };
     store.transactions.unshift(tx);
     saveLocalStore(store);
+    saveAssetToFirestore(asset).catch(() => {});
+    saveTransactionToFirestore(tx).catch(() => {});
     return { success: true, message: `Successfully issued to ${emp.fullName}`, asset, transaction: tx };
   },
 
@@ -776,6 +827,8 @@ export const api = {
     };
     store.transactions.unshift(tx);
     saveLocalStore(store);
+    saveAssetToFirestore(asset).catch(() => {});
+    saveTransactionToFirestore(tx).catch(() => {});
     return { success: true, message: `Asset returned. Status: ${newStatus}`, asset, transaction: tx };
   },
 
@@ -834,6 +887,14 @@ export const api = {
   async getEmployees(): Promise<Employee[]> {
     const data = await safeFetch<{ success: boolean; employees: Employee[] }>(`/employees`);
     if (data && data.success) return data.employees;
+    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
+    const cloudEmps = await fetchAllEmployeesFromFirestore();
+    if (cloudEmps && cloudEmps.length > 0) {
+      const store = getLocalStore();
+      store.employees = cloudEmps;
+      saveLocalStore(store);
+      return cloudEmps;
+    }
     return getLocalStore().employees;
   },
 
@@ -880,6 +941,7 @@ export const api = {
     if (!store.employees.some((e: any) => e.employeeId === empId)) {
       store.employees.push(newEmp);
       saveLocalStore(store);
+      saveEmployeeToFirestore(newEmp).catch(() => {});
     }
 
     if (data && data.success) return data;
@@ -909,6 +971,7 @@ export const api = {
         if (updates.officeBranch) store.user.officeBranch = updates.officeBranch;
       }
       saveLocalStore(store);
+      saveEmployeeToFirestore(emp).catch(() => {});
     }
 
     if (data && data.success) return data;
@@ -933,6 +996,7 @@ export const api = {
         throw new Error(`Cannot delete: Employee has ${activeAssets.length} active assigned asset(s).`);
       }
       const removed = store.employees.splice(idx, 1)[0];
+      deleteEmployeeFromFirestore(id).catch(() => {});
       saveLocalStore(store);
       if (data && data.success) return data;
       return { success: true, message: `Employee ${removed.fullName} removed from registry` };
@@ -962,6 +1026,7 @@ export const api = {
         if (updates.phone) emp.phone = updates.phone;
         if (updates.officeBranch) emp.officeBranch = updates.officeBranch;
         if (updates.designation) emp.designation = updates.designation;
+        saveEmployeeToFirestore(emp).catch(() => {});
       }
     }
     const execEmp = store.employees.find((e: any) => e.employeeId === 'EMP-001');
@@ -971,8 +1036,10 @@ export const api = {
       if (updates.phone) execEmp.phone = updates.phone;
       if (updates.officeBranch) execEmp.officeBranch = updates.officeBranch;
       if (updates.designation) execEmp.designation = updates.designation;
+      saveEmployeeToFirestore(execEmp).catch(() => {});
     }
     saveLocalStore(store);
+    saveUserToFirestore(store.user).catch(() => {});
 
     if (data && data.success) return data.user;
     return store.user;
@@ -981,18 +1048,39 @@ export const api = {
   async getCategories(): Promise<Category[]> {
     const data = await safeFetch<{ success: boolean; categories: Category[] }>(`/categories`);
     if (data && data.success) return data.categories;
+    const cloudCats = await fetchCategoriesFromFirestore();
+    if (cloudCats && cloudCats.length > 0) {
+      const store = getLocalStore();
+      store.categories = cloudCats;
+      saveLocalStore(store);
+      return cloudCats;
+    }
     return getLocalStore().categories;
   },
 
   async getLocations(): Promise<LocationRecord[]> {
     const data = await safeFetch<{ success: boolean; locations: LocationRecord[] }>(`/locations`);
     if (data && data.success) return data.locations;
+    const cloudLocs = await fetchLocationsFromFirestore();
+    if (cloudLocs && cloudLocs.length > 0) {
+      const store = getLocalStore();
+      store.locations = cloudLocs;
+      saveLocalStore(store);
+      return cloudLocs;
+    }
     return getLocalStore().locations;
   },
 
   async getConsumables(): Promise<ConsumableItem[]> {
     const data = await safeFetch<{ success: boolean; consumables: ConsumableItem[] }>(`/consumables`);
     if (data && data.success) return data.consumables;
+    const cloudCons = await fetchConsumablesFromFirestore();
+    if (cloudCons && cloudCons.length > 0) {
+      const store = getLocalStore();
+      store.consumables = cloudCons;
+      saveLocalStore(store);
+      return cloudCons;
+    }
     return getLocalStore().consumables;
   },
 
@@ -1002,6 +1090,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    const store = getLocalStore();
+    const item = (store.consumables || []).find((c: any) => c.itemCode === payload.itemCode);
+    if (item) {
+      item.currentStock = Math.max(0, item.currentStock + Number(payload.deltaQty));
+      item.lastUpdated = new Date().toISOString();
+      saveLocalStore(store);
+      saveConsumableToFirestore(item).catch(() => {});
+    }
     if (data && data.success) return data;
     return { success: true, message: 'Stock adjusted' };
   },
@@ -1009,18 +1105,39 @@ export const api = {
   async getTransactions(filters?: any): Promise<AssetTransaction[]> {
     const data = await safeFetch<{ success: boolean; transactions: AssetTransaction[] }>(`/transactions`);
     if (data && data.success) return data.transactions;
+    const cloudTx = await fetchTransactionsFromFirestore();
+    if (cloudTx && cloudTx.length > 0) {
+      const store = getLocalStore();
+      store.transactions = cloudTx;
+      saveLocalStore(store);
+      return cloudTx;
+    }
     return getLocalStore().transactions;
   },
 
   async getActivityLogs(): Promise<ActivityLog[]> {
     const data = await safeFetch<{ success: boolean; logs: ActivityLog[] }>(`/activity-logs`);
     if (data && data.success) return data.logs;
+    const cloudLogs = await fetchActivityLogsFromFirestore();
+    if (cloudLogs && cloudLogs.length > 0) {
+      const store = getLocalStore();
+      store.activityLogs = cloudLogs;
+      saveLocalStore(store);
+      return cloudLogs;
+    }
     return getLocalStore().activityLogs;
   },
 
   async getRequests(): Promise<AssetRequest[]> {
     const data = await safeFetch<{ success: boolean; requests: AssetRequest[] }>(`/requests`);
     if (data && data.success) return data.requests;
+    const cloudReqs = await fetchRequestsFromFirestore();
+    if (cloudReqs && cloudReqs.length > 0) {
+      const store = getLocalStore();
+      store.requests = cloudReqs;
+      saveLocalStore(store);
+      return cloudReqs;
+    }
     return getLocalStore().requests;
   },
 
@@ -1030,8 +1147,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req)
     });
+    const store = getLocalStore();
+    const newReq: AssetRequest = {
+      requestId: req.requestId || `REQ-${Date.now()}`,
+      requestNumber: `REQ-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+      requestingEmployeeId: req.requestingEmployeeId,
+      requestingEmployeeName: req.requestingEmployeeName,
+      department: req.department,
+      itemType: req.itemType,
+      itemDescription: req.itemDescription,
+      quantity: req.quantity,
+      businessJustification: req.businessJustification,
+      requestDate: new Date().toISOString(),
+      requiredDate: req.requiredDate || new Date().toISOString().split('T')[0],
+      status: 'Pending'
+    };
+    if (!Array.isArray(store.requests)) store.requests = [];
+    store.requests.unshift(newReq);
+    saveLocalStore(store);
+    saveRequestToFirestore(newReq).catch(() => {});
     if (data && data.success) return data.request;
-    return { requestId: `REQ-${Date.now()}`, requestNumber: `REQ-2026-001`, requestingEmployeeId: req.requestingEmployeeId, requestingEmployeeName: req.requestingEmployeeName, department: req.department, itemType: req.itemType, itemDescription: req.itemDescription, quantity: req.quantity, businessJustification: req.businessJustification, requestDate: new Date().toISOString(), requiredDate: req.requiredDate, status: 'Pending' };
+    return newReq;
   },
 
   async updateRequestStatus(id: string, status: any, extra?: any): Promise<any> {
@@ -1040,6 +1176,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, ...extra })
     });
+    const store = getLocalStore();
+    const req = (store.requests || []).find((r: any) => r.requestId === id);
+    if (req) {
+      req.status = status;
+      if (extra?.rejectionReason) req.rejectionReason = extra.rejectionReason;
+      if (extra?.fulfilledAssetId) req.fulfilledAssetId = extra.fulfilledAssetId;
+      saveLocalStore(store);
+      saveRequestToFirestore(req).catch(() => {});
+    }
     if (data && data.success) return data.request;
     return { success: true };
   },
@@ -1047,6 +1192,13 @@ export const api = {
   async getMaintenance(): Promise<MaintenanceRecord[]> {
     const data = await safeFetch<{ success: boolean; maintenance: MaintenanceRecord[] }>(`/maintenance`);
     if (data && data.success) return data.maintenance;
+    const cloudMnt = await fetchMaintenanceFromFirestore();
+    if (cloudMnt && cloudMnt.length > 0) {
+      const store = getLocalStore();
+      store.maintenance = cloudMnt;
+      saveLocalStore(store);
+      return cloudMnt;
+    }
     return getLocalStore().maintenance;
   },
 
@@ -1056,8 +1208,26 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
+    const store = getLocalStore();
+    const newMnt: MaintenanceRecord = {
+      maintenanceId: `MNT-${Date.now()}`,
+      assetId: data.assetId,
+      assetName: data.assetName || 'Equipment',
+      issueDescription: data.issueDescription,
+      reportedDate: new Date().toISOString().split('T')[0],
+      serviceProvider: data.serviceProvider || 'Technical Services',
+      repairCost: Number(data.repairCost) || 0,
+      workPerformed: '',
+      status: 'Reported',
+      warrantyStatus: 'Active',
+      reportedBy: store.user.name
+    };
+    if (!Array.isArray(store.maintenance)) store.maintenance = [];
+    store.maintenance.unshift(newMnt);
+    saveLocalStore(store);
+    saveMaintenanceToFirestore(newMnt).catch(() => {});
     if (res && res.success) return res.maintenance;
-    return { maintenanceId: `MNT-${Date.now()}`, assetId: data.assetId, issueDescription: data.issueDescription, reportedDate: new Date().toISOString().split('T')[0], serviceProvider: data.serviceProvider, repairCost: data.repairCost, workPerformed: '', status: 'Reported', warrantyStatus: 'Active', reportedBy: 'Admin' };
+    return newMnt;
   },
 
   async updateMaintenance(id: string, updates: any): Promise<void> {
