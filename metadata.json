@@ -1,0 +1,6 @@
+{
+  "name": "WANG Office Inventory Management System",
+  "description": "Enterprise-grade asset tracking, barcode scanning, issue and return management, missing item tracking, and Google Sheets synchronization for Welfare Association for New Generation.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
