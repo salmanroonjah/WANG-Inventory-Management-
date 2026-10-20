@@ -9,10 +9,19 @@
     <meta property="og:description" content="Enterprise-grade asset tracking, barcode scanning, issue and return management, missing item tracking, and Google Sheets synchronization for Welfare Association for New Generation." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script type="text/javascript">
+      // GitHub Pages SPA route restorer
+      (function() {
+        var redirect = sessionStorage.redirect;
+        delete sessionStorage.redirect;
+        if (redirect && redirect !== location.href) {
+          history.replaceState(null, null, redirect);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
