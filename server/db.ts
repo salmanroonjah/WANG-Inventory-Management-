@@ -45,28 +45,70 @@ if (!fs.existsSync(DATA_DIR)) {
 const INITIAL_SEED: DatabaseSchema = {
   categories: [
     {
-      categoryId: 'CAT-ELE',
-      categoryName: 'Electrical & Power Systems',
-      description: 'Generators, solar inverters, UPS backup units, power distribution, and electrical test tools',
+      categoryId: 'CAT-FUR',
+      categoryName: 'Furniture',
+      description: 'Office chairs, desks, tables, and general seating furniture',
+      totalAssets: 1
+    },
+    {
+      categoryId: 'CAT-FFW',
+      categoryName: 'Furniture, Fixtures & Wall Fittings',
+      description: 'Storage cabinets, shelving units, partitions, notice boards, and wall fixtures',
+      totalAssets: 1
+    },
+    {
+      categoryId: 'CAT-ITC',
+      categoryName: 'IT & Computing',
+      description: 'Laptops, desktop computers, servers, switches, routers, and monitors',
       totalAssets: 3
     },
     {
-      categoryId: 'CAT-IT',
-      categoryName: 'IT & Computing Equipment',
-      description: 'Laptops, desktop workstations, high-speed network switches, and enterprise routers',
-      totalAssets: 4
-    },
-    {
-      categoryId: 'CAT-FUR',
-      categoryName: 'Office Furniture & Fixtures',
-      description: 'Ergonomic chairs, conference tables, file storage cabinets, and partition workstations',
+      categoryId: 'CAT-MED',
+      categoryName: 'Media & Production',
+      description: 'Cameras, video recorders, audio gear, lighting kits, and broadcasting tools',
       totalAssets: 2
     },
     {
-      categoryId: 'CAT-COM',
-      categoryName: 'Media & Field Communications',
-      description: 'Cameras, sound recording gear, satellite phones, and field radio transmitters',
-      totalAssets: 2
+      categoryId: 'CAT-OFA',
+      categoryName: 'Office Automation',
+      description: 'Printers, copiers, document scanners, shredders, and counting machines',
+      totalAssets: 1
+    },
+    {
+      categoryId: 'CAT-TAM',
+      categoryName: 'Tools & Maintenance',
+      description: 'Hand tools, power tools, workshop hardware, and servicing equipment',
+      totalAssets: 0
+    },
+    {
+      categoryId: 'CAT-STV',
+      categoryName: 'Stitching & Vocational',
+      description: 'Industrial sewing machines, vocational training kits, and tailoring tools',
+      totalAssets: 0
+    },
+    {
+      categoryId: 'CAT-KPA',
+      categoryName: 'Kitchen & Pantry Appliances',
+      description: 'Microwaves, refrigerators, water dispensers, kettles, and kitchenware',
+      totalAssets: 0
+    },
+    {
+      categoryId: 'CAT-EPS',
+      categoryName: 'Electrical & Power Systems',
+      description: 'Generators, solar inverters, UPS backup units, and electrical power distribution',
+      totalAssets: 3
+    },
+    {
+      categoryId: 'CAT-CCTV',
+      categoryName: 'CCTV & Security',
+      description: 'Security cameras, DVR/NVR units, biometric access control, and alarms',
+      totalAssets: 0
+    },
+    {
+      categoryId: 'CAT-WAS',
+      categoryName: 'Water & Sanitation',
+      description: 'Water filtration plants, pumps, plumbing supplies, and sanitation hardware',
+      totalAssets: 0
     }
   ],
   employees: [
@@ -170,8 +212,8 @@ const INITIAL_SEED: DatabaseSchema = {
   ],
   assets: [
     {
-      assetId: 'WANG-ELE-001',
-      categoryId: 'CAT-ELE',
+      assetId: 'WANG-EPS-001',
+      categoryId: 'CAT-EPS',
       categoryName: 'Electrical & Power Systems',
       itemName: 'Dell Latitude 5420 Laptop',
       brand: 'Dell',
@@ -197,8 +239,8 @@ const INITIAL_SEED: DatabaseSchema = {
       dueDate: '2026-12-31'
     },
     {
-      assetId: 'WANG-ELE-002',
-      categoryId: 'CAT-ELE',
+      assetId: 'WANG-EPS-002',
+      categoryId: 'CAT-EPS',
       categoryName: 'Electrical & Power Systems',
       itemName: 'Logitech MX Master 3S Wireless Mouse',
       brand: 'Logitech',
@@ -223,8 +265,8 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-10-01T08:00:00Z'
     },
     {
-      assetId: 'WANG-ELE-003',
-      categoryId: 'CAT-ELE',
+      assetId: 'WANG-EPS-003',
+      categoryId: 'CAT-EPS',
       categoryName: 'Electrical & Power Systems',
       itemName: 'APC Smart-UPS 1500VA LCD 230V',
       brand: 'Schneider Electric / APC',
@@ -249,9 +291,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-08-14T16:45:00Z'
     },
     {
-      assetId: 'WANG-IT-001',
-      categoryId: 'CAT-IT',
-      categoryName: 'IT & Computing Equipment',
+      assetId: 'WANG-OFA-001',
+      categoryId: 'CAT-OFA',
+      categoryName: 'Office Automation',
       itemName: 'HP LaserJet Pro MFP 4103fdw Printer',
       brand: 'HP',
       model: 'LaserJet 4103fdw All-in-One Duplex WiFi',
@@ -275,9 +317,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-07-22T09:15:00Z'
     },
     {
-      assetId: 'WANG-IT-002',
-      categoryId: 'CAT-IT',
-      categoryName: 'IT & Computing Equipment',
+      assetId: 'WANG-ITC-001',
+      categoryId: 'CAT-ITC',
+      categoryName: 'IT & Computing',
       itemName: 'Dell UltraSharp 27" 4K USB-C Hub Monitor',
       brand: 'Dell',
       model: 'U2723QE',
@@ -304,7 +346,7 @@ const INITIAL_SEED: DatabaseSchema = {
     {
       assetId: 'WANG-FUR-001',
       categoryId: 'CAT-FUR',
-      categoryName: 'Office Furniture & Fixtures',
+      categoryName: 'Furniture',
       itemName: 'Ergonomic High-Back Executive Mesh Chair',
       brand: 'Habitt Executive',
       model: 'AeroPro Ergonomic',
@@ -328,9 +370,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-06-15T10:00:00Z'
     },
     {
-      assetId: 'WANG-FUR-002',
-      categoryId: 'CAT-FUR',
-      categoryName: 'Office Furniture & Fixtures',
+      assetId: 'WANG-FFW-001',
+      categoryId: 'CAT-FFW',
+      categoryName: 'Furniture, Fixtures & Wall Fittings',
       itemName: 'Steel Fireproof Document Safe Cabinet',
       brand: 'ChubbSafe',
       model: 'DataPlus 2-Hour Fire Resistant',
@@ -354,9 +396,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-01-10T12:00:00Z'
     },
     {
-      assetId: 'WANG-COM-001',
-      categoryId: 'CAT-COM',
-      categoryName: 'Media & Field Communications',
+      assetId: 'WANG-MED-001',
+      categoryId: 'CAT-MED',
+      categoryName: 'Media & Production',
       itemName: 'Canon EOS R50 Mirrorless Camera + 18-45mm Kit',
       brand: 'Canon',
       model: 'EOS R50 4K Content Creator Kit',
@@ -380,9 +422,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-09-20T15:20:00Z'
     },
     {
-      assetId: 'WANG-COM-002',
-      categoryId: 'CAT-COM',
-      categoryName: 'Media & Field Communications',
+      assetId: 'WANG-MED-002',
+      categoryId: 'CAT-MED',
+      categoryName: 'Media & Production',
       itemName: 'Iridium Extreme 9575 Satellite Handset',
       brand: 'Iridium',
       model: 'Extreme 9575 Military Grade',
@@ -406,8 +448,8 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-08-01T10:00:00Z'
     },
     {
-      assetId: 'WANG-ELE-004',
-      categoryId: 'CAT-ELE',
+      assetId: 'WANG-EPS-004',
+      categoryId: 'CAT-EPS',
       categoryName: 'Electrical & Power Systems',
       itemName: 'Yamaha EF2000iS Inverter Generator 2kVA',
       brand: 'Yamaha',
@@ -432,9 +474,9 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-10-15T14:00:00Z'
     },
     {
-      assetId: 'WANG-IT-003',
-      categoryId: 'CAT-IT',
-      categoryName: 'IT & Computing Equipment',
+      assetId: 'WANG-ITC-002',
+      categoryId: 'CAT-ITC',
+      categoryName: 'IT & Computing',
       itemName: 'Lenovo ThinkPad X1 Carbon Gen 10',
       brand: 'Lenovo',
       model: 'X1 Carbon Core i7 32GB',
