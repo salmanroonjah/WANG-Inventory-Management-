@@ -4,9 +4,14 @@
     <meta charset="UTF-8" />
     <title>WANG Office Inventory Management System</title>
     <script type="text/javascript">
-      // GitHub Pages SPA redirect
-      sessionStorage.redirect = window.location.href;
-      window.location.replace('./');
+      // Clean GitHub Pages redirect to application root
+      var path = window.location.pathname;
+      var repo = '/WANG-Inventory-Management-/';
+      if (path.indexOf(repo) !== -1) {
+        window.location.replace(window.location.origin + repo);
+      } else {
+        window.location.replace('./');
+      }
     </script>
   </head>
   <body>

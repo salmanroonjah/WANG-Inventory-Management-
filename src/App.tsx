@@ -49,19 +49,13 @@ import {
   UserSession 
 } from './types/inventory.js';
 import { api } from './services/api.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<ViewTab>('dashboard');
-  const [currentUser, setCurrentUser] = useState<UserSession>({
-    userId: 'USR-ADMIN-01',
-    name: 'Admin Manager',
-    email: 'admin@wang.org.pk',
-    role: 'Inventory Manager',
-    employeeId: 'EMP-001',
-    officeBranch: 'Head Office - Islamabad'
-  });
+  const [currentUser, setCurrentUser] = useState<UserSession>(() => api.getInitialUser());
 
-  // Data states
+  // Data states initialized synchronously from template seed to eliminate render delays
   const [assets, setAssets] = useState<Asset[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -72,7 +66,7 @@ export default function App() {
   const [maintenance, setMaintenance] = useState<MaintenanceRecord[]>([]);
   const [audits, setAudits] = useState<PhysicalAudit[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [stats, setStats] = useState<DashboardStats>(() => api.getInitialStats());
 
   // Modals
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -205,7 +199,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans flex flex-col text-slate-900 antialiased">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-100 font-sans flex flex-col text-slate-900 antialiased">
       {/* Top Header Navbar */}
       <Navbar
         currentUser={currentUser}
@@ -482,6 +477,7 @@ export default function App() {
           transaction={voucherData.transaction}
         />
       )}
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

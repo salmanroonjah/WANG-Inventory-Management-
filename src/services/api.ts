@@ -366,30 +366,108 @@ const FALLBACK_SEED = {
 // LocalStorage Helper for Static / GitHub Hosting Fallback
 function getLocalStore() {
   try {
-    const raw = localStorage.getItem('WANG_INVENTORY_LOCAL_DB');
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-  return FALLBACK_SEED;
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_INVENTORY_LOCAL_DB') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        user: parsed.user || FALLBACK_SEED.user,
+        categories: Array.isArray(parsed.categories) && parsed.categories.length > 0 ? parsed.categories : FALLBACK_SEED.categories,
+        employees: Array.isArray(parsed.employees) && parsed.employees.length > 0 ? parsed.employees : FALLBACK_SEED.employees,
+        locations: Array.isArray(parsed.locations) && parsed.locations.length > 0 ? parsed.locations : FALLBACK_SEED.locations,
+        assets: Array.isArray(parsed.assets) && parsed.assets.length > 0 ? parsed.assets : FALLBACK_SEED.assets,
+        consumables: Array.isArray(parsed.consumables) && parsed.consumables.length > 0 ? parsed.consumables : FALLBACK_SEED.consumables,
+        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : FALLBACK_SEED.transactions,
+        requests: Array.isArray(parsed.requests) ? parsed.requests : [],
+        maintenance: Array.isArray(parsed.maintenance) ? parsed.maintenance : [],
+        audits: Array.isArray(parsed.audits) ? parsed.audits : [],
+        activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
+        sheetsConfig: parsed.sheetsConfig || FALLBACK_SEED.sheetsConfig
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to parse localStorage, resetting to template seed', e);
+  }
+  return JSON.parse(JSON.stringify(FALLBACK_SEED));
 }
 
 function saveLocalStore(data: any) {
   try {
-    localStorage.setItem('WANG_INVENTORY_LOCAL_DB', JSON.stringify(data));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('WANG_INVENTORY_LOCAL_DB', JSON.stringify(data));
+    }
   } catch (e) {}
 }
 
+const isStaticHosting = typeof window !== 'undefined' && (
+  window.location.hostname.endsWith('github.io') || 
+  window.location.protocol === 'file:'
+);
+
 async function safeFetch<T>(endpoint: string, options?: RequestInit): Promise<T | null> {
+  if (isStaticHosting) {
+    // Immediate return on GitHub Pages without failing 404 network requests
+    return null;
+  }
   try {
     const res = await fetch(`${BASE_URL}${endpoint}`, options);
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     return await res.json();
   } catch (err) {
-    // Backend API not reachable (e.g. on GitHub Pages static hosting) -> Use localStorage fallback
+    // Backend API not reachable -> Use localStorage fallback
     return null;
   }
 }
 
 export const api = {
+  getInitialUser(): UserSession {
+    return getLocalStore().user;
+  },
+
+  getInitialStats(): DashboardStats {
+    const store = getLocalStore();
+    const assets: Asset[] = store.assets || [];
+    const totalAssets = assets.length;
+    const availableAssets = assets.filter(a => a.status === 'Available').length;
+    const issuedAssets = assets.filter(a => a.status === 'Issued').length;
+    const underMaintenanceAssets = assets.filter(a => a.status === 'Under Maintenance').length;
+    const missingLostAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost').length;
+    const retiredAssets = assets.filter(a => a.status === 'Retired' || a.status === 'Archived').length;
+
+    const catMap = new Map<string, number>();
+    for (const a of assets) {
+      catMap.set(a.categoryName, (catMap.get(a.categoryName) || 0) + 1);
+    }
+    const categoryDistribution = Array.from(catMap.entries()).map(([category, count]) => ({ category, count }));
+    const condMap = new Map<string, number>();
+    for (const a of assets) {
+      condMap.set(a.condition, (condMap.get(a.condition) || 0) + 1);
+    }
+    const conditionDistribution = Array.from(condMap.entries()).map(([condition, count]) => ({ condition, count }));
+    const statusMap = new Map<string, number>();
+    for (const a of assets) {
+      statusMap.set(a.status, (statusMap.get(a.status) || 0) + 1);
+    }
+    const statusDistribution = Array.from(statusMap.entries()).map(([status, count]) => ({ status, count }));
+
+    return {
+      totalAssets,
+      availableAssets,
+      issuedAssets,
+      underMaintenanceAssets,
+      missingLostAssets,
+      retiredAssets,
+      overdueAssetsCount: assets.filter(a => a.status === 'Issued' && a.dueDate && new Date(a.dueDate) < new Date()).length,
+      totalConsumableStock: (store.consumables || []).reduce((acc: number, c: any) => acc + (c.currentStock || 0), 0),
+      lowStockItemsCount: (store.consumables || []).filter((c: any) => (c.currentStock || 0) <= (c.minimumThreshold || 0)).length,
+      pendingRequestsCount: (store.requests || []).filter((r: any) => r.status === 'Pending').length,
+      activeAuditsCount: (store.audits || []).filter((a: any) => a.status === 'In Progress').length,
+      categoryDistribution,
+      conditionDistribution,
+      statusDistribution,
+      recentTransactions: (store.transactions || []).slice(0, 8)
+    };
+  },
+
   async getCurrentUser(): Promise<UserSession> {
     const data = await safeFetch<{ success: boolean; user: UserSession }>('/auth/current-user');
     if (data && data.success) return data.user;

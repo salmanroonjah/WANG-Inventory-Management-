@@ -24,6 +24,11 @@ let activeSession = {
   officeBranch: 'Head Office - Islamabad'
 };
 
+// --- HEALTH & STATUS ---
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
 // --- AUTH & ROLES ---
 app.get('/api/auth/current-user', (_req: Request, res: Response) => {
   res.json({ success: true, user: activeSession });
