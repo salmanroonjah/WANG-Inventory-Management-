@@ -24,7 +24,6 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { Asset, Category, LocationRecord } from '../types/inventory.js';
-import { BarcodeBadge } from '../components/BarcodeBadge.js';
 import { api } from '../services/api.js';
 
 interface InventoryViewProps {
@@ -363,7 +362,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 className="px-4 py-2 bg-[#003279] hover:bg-[#002254] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4 text-[#f1cc11]" />
-                <span>+ Register Asset</span>
+                <span>Register Asset</span>
               </button>
             )}
 
@@ -717,8 +716,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       </td>
 
                       {/* Asset ID */}
-                      <td className="py-3 px-3 font-mono font-bold text-[#003279] whitespace-nowrap">
-                        <BarcodeBadge code={asset.assetId} />
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <span className="font-mono text-xs font-bold text-[#003279] bg-blue-50/80 px-2.5 py-1 rounded-lg border border-blue-200/80 inline-block shadow-2xs">
+                          {asset.assetId}
+                        </span>
                       </td>
 
                       {/* Item Name & Specs */}

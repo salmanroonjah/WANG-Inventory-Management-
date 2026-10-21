@@ -540,7 +540,19 @@ export default function App() {
         categories={categories}
         locations={locations}
         existingAssets={assets}
-        onSuccess={() => loadData()}
+        onSuccess={(savedAsset) => {
+          if (savedAsset) {
+            setAssets(prev => {
+              const cleanId = savedAsset.assetId.toUpperCase();
+              const exists = prev.some(a => a.assetId.toUpperCase() === cleanId);
+              if (exists) {
+                return prev.map(a => a.assetId.toUpperCase() === cleanId ? savedAsset : a);
+              }
+              return [savedAsset, ...prev];
+            });
+          }
+          loadData();
+        }}
       />
 
       {/* 8. Printable Handover / Return Receipt Voucher */}

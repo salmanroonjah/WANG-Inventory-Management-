@@ -524,7 +524,7 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
                           className="text-[#003279] font-bold flex items-center gap-1 hover:underline cursor-pointer"
                         >
                           <Plus className="w-3.5 h-3.5 text-[#f1cc11]" />
-                          <span>+ Add Room</span>
+                          <span>Add Room</span>
                         </button>
                       )}
                     </div>
@@ -575,7 +575,7 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
                     className="px-4 py-1.5 bg-[#003279] hover:bg-[#002357] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Plus className="w-4 h-4 text-[#f1cc11]" />
-                    <span>+ Add Room to this Building</span>
+                    <span>Add Room to this Building</span>
                   </button>
                 )}
               </div>

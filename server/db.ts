@@ -1365,6 +1365,11 @@ class Database {
       return { success: false, message: `An asset with Asset ID "${cleanId}" already exists.` };
     }
 
+    // If ID was in deleted blacklist, restore/unmark it
+    if (Array.isArray(this.data.deletedAssetIds)) {
+      this.data.deletedAssetIds = this.data.deletedAssetIds.filter(id => id.toUpperCase() !== cleanId);
+    }
+
     const now = new Date().toISOString();
     const newAsset: Asset = {
       assetId: cleanId,
@@ -1434,6 +1439,11 @@ class Database {
     const asset = this.getAssetById(assetId);
     if (!asset) {
       return { success: false, message: `Asset "${assetId}" not found.` };
+    }
+
+    const cleanId = asset.assetId.trim().toUpperCase();
+    if (Array.isArray(this.data.deletedAssetIds)) {
+      this.data.deletedAssetIds = this.data.deletedAssetIds.filter(id => id.toUpperCase() !== cleanId);
     }
 
     const previousCondition = asset.condition;

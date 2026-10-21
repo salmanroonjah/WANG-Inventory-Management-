@@ -415,6 +415,18 @@ export function addDeletedAssetIds(ids: string[]) {
   } catch {}
 }
 
+export function removeDeletedAssetId(id: string) {
+  try {
+    if (typeof window === 'undefined' || !id) return;
+    const current = getDeletedAssetIds();
+    const cleanId = String(id).trim().toUpperCase();
+    if (current.has(cleanId)) {
+      current.delete(cleanId);
+      localStorage.setItem('WANG_DELETED_ASSET_IDS', JSON.stringify(Array.from(current)));
+    }
+  } catch {}
+}
+
 // LocalStorage Helper for Static / GitHub Hosting Fallback
 function getLocalStore() {
   const deletedSet = getDeletedAssetIds();
@@ -677,14 +689,18 @@ export const api = {
   },
 
   async createAsset(asset: Partial<Asset>): Promise<{ asset: Asset; message: string }> {
+    const targetId = (asset.assetId || '').trim().toUpperCase();
+    if (targetId) {
+      removeDeletedAssetId(targetId);
+    }
     const data = await safeFetch<{ success: boolean; asset: Asset; message: string }>(`/assets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(asset)
     });
     const store = getLocalStore();
-    const newAsset: Asset = {
-      assetId: asset.assetId!.toUpperCase(),
+    const newAsset: Asset = data && data.success && data.asset ? data.asset : {
+      assetId: targetId || 'WANG-GEN-001',
       categoryId: asset.categoryId || 'CAT-ITC',
       categoryName: asset.categoryName || 'IT & Computing',
       itemName: asset.itemName || 'Unregistered Asset',
@@ -709,7 +725,11 @@ export const api = {
       createdAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString()
     };
-    store.assets.push(newAsset);
+    if (newAsset.assetId) {
+      removeDeletedAssetId(newAsset.assetId);
+    }
+    store.assets = store.assets.filter((a: any) => a.assetId.toUpperCase() !== newAsset.assetId.toUpperCase());
+    store.assets.unshift(newAsset);
     saveLocalStore(store);
     saveAssetToFirestore(newAsset).catch(() => {});
     if (data && data.success) return data;
@@ -717,6 +737,10 @@ export const api = {
   },
 
   async updateAsset(id: string, updates: Partial<Asset>): Promise<{ asset: Asset; message: string }> {
+    const cleanId = (id || '').trim().toUpperCase();
+    if (cleanId) {
+      removeDeletedAssetId(cleanId);
+    }
     const data = await safeFetch<{ success: boolean; asset: Asset; message: string }>(`/assets/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

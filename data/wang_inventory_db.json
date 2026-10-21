@@ -537,6 +537,70 @@
   ],
   "transactions": [
     {
+      "transactionId": "TX-1792585331544-325",
+      "assetId": "WANG-TEST-002",
+      "assetName": "Re-registered Asset Setup",
+      "employeeId": "",
+      "employeeName": "",
+      "transactionType": "INITIAL_IMPORT",
+      "performedByUserId": "USR-EXEC-01",
+      "performedByName": "Dr. Salman Khan",
+      "timestamp": "2026-10-21T12:22:11.544Z",
+      "previousStatus": "Available",
+      "newStatus": "Available",
+      "condition": "Good",
+      "notes": "Asset registered in system.",
+      "location": "Room 01: Reception Office"
+    },
+    {
+      "transactionId": "TX-1792585324458-143",
+      "assetId": "WANG-TEST-002",
+      "assetName": "Test Asset Setup",
+      "employeeId": "",
+      "employeeName": "",
+      "transactionType": "INITIAL_IMPORT",
+      "performedByUserId": "USR-EXEC-01",
+      "performedByName": "Dr. Salman Khan",
+      "timestamp": "2026-10-21T12:22:04.458Z",
+      "previousStatus": "Available",
+      "newStatus": "Available",
+      "condition": "Good",
+      "notes": "Asset registered in system.",
+      "location": "Room 01: Reception Office"
+    },
+    {
+      "transactionId": "TX-1792584951074-645",
+      "assetId": "WANG-TEST-001",
+      "assetName": "Test Asset Recreated",
+      "employeeId": "",
+      "employeeName": "",
+      "transactionType": "INITIAL_IMPORT",
+      "performedByUserId": "USR-EXEC-01",
+      "performedByName": "Dr. Salman Khan",
+      "timestamp": "2026-10-21T12:15:51.074Z",
+      "previousStatus": "Available",
+      "newStatus": "Available",
+      "condition": "Good",
+      "notes": "Asset registered in system.",
+      "location": "Central Store - Bay A"
+    },
+    {
+      "transactionId": "TX-1792584941595-566",
+      "assetId": "WANG-TEST-001",
+      "assetName": "Test Asset",
+      "employeeId": "",
+      "employeeName": "",
+      "transactionType": "INITIAL_IMPORT",
+      "performedByUserId": "USR-EXEC-01",
+      "performedByName": "Dr. Salman Khan",
+      "timestamp": "2026-10-21T12:15:41.595Z",
+      "previousStatus": "Available",
+      "newStatus": "Available",
+      "condition": "Good",
+      "notes": "Asset registered in system.",
+      "location": "Central Store - Bay A"
+    },
+    {
       "transactionId": "TX-2024-001",
       "assetId": "WANG-ELE-001",
       "assetName": "Dell Latitude 5420 Laptop",
@@ -655,6 +719,94 @@
   ],
   "activityLogs": [
     {
+      "logId": "LOG-1792585339483-36",
+      "timestamp": "2026-10-21T12:22:19.483Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Super Admin",
+      "action": "DELETE_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-002",
+      "details": "Asset removed from registry: Re-registered Asset Setup (WANG-TEST-002)"
+    },
+    {
+      "logId": "LOG-1792585331544-393",
+      "timestamp": "2026-10-21T12:22:11.544Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Inventory Manager",
+      "action": "REGISTER_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-002",
+      "details": "New asset registered: Re-registered Asset Setup (WANG-TEST-002)"
+    },
+    {
+      "logId": "LOG-1792585327166-565",
+      "timestamp": "2026-10-21T12:22:07.166Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Super Admin",
+      "action": "DELETE_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-002",
+      "details": "Asset removed from registry: Test Asset Setup (WANG-TEST-002)"
+    },
+    {
+      "logId": "LOG-1792585324459-540",
+      "timestamp": "2026-10-21T12:22:04.459Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Inventory Manager",
+      "action": "REGISTER_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-002",
+      "details": "New asset registered: Test Asset Setup (WANG-TEST-002)"
+    },
+    {
+      "logId": "LOG-1792584958911-173",
+      "timestamp": "2026-10-21T12:15:58.911Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Super Admin",
+      "action": "DELETE_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-001",
+      "details": "Asset removed from registry: Test Asset Recreated (WANG-TEST-001)"
+    },
+    {
+      "logId": "LOG-1792584951074-313",
+      "timestamp": "2026-10-21T12:15:51.074Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Inventory Manager",
+      "action": "REGISTER_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-001",
+      "details": "New asset registered: Test Asset Recreated (WANG-TEST-001)"
+    },
+    {
+      "logId": "LOG-1792584945181-592",
+      "timestamp": "2026-10-21T12:15:45.181Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Super Admin",
+      "action": "DELETE_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-001",
+      "details": "Asset removed from registry: Test Asset (WANG-TEST-001)"
+    },
+    {
+      "logId": "LOG-1792584941595-781",
+      "timestamp": "2026-10-21T12:15:41.595Z",
+      "userId": "USR-EXEC-01",
+      "userName": "Dr. Salman Khan",
+      "userRole": "Inventory Manager",
+      "action": "REGISTER_ASSET",
+      "recordType": "Asset",
+      "recordId": "WANG-TEST-001",
+      "details": "New asset registered: Test Asset (WANG-TEST-001)"
+    },
+    {
       "logId": "LOG-1792580914034-837",
       "timestamp": "2026-10-21T11:08:34.034Z",
       "userId": "USR-EXEC-01",
@@ -702,5 +854,9 @@
     },
     "totalSyncedRows": 11,
     "autoSyncOnChange": true
-  }
+  },
+  "deletedAssetIds": [
+    "WANG-TEST-001",
+    "WANG-TEST-002"
+  ]
 }
