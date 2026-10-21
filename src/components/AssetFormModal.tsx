@@ -89,11 +89,30 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   }, [assetToEdit, categories, isOpen]);
 
   const generateAutoId = (catId: string) => {
-    // Generate code based on category code, e.g. CAT-ITC -> WANG-ITC-005
-    const prefix = catId.replace('CAT-', '');
-    const matching = existingAssets.filter(a => a.assetId.includes(`-${prefix}-`));
-    const nextSeq = String(matching.length + 1).padStart(3, '0');
-    setAssetId(`WANG-${prefix}-${nextSeq}`);
+    const selectedCategory = categories.find(c => c.categoryId === catId);
+    let codePrefix = catId.replace(/^CAT-/, '').toUpperCase().trim();
+    if (selectedCategory && selectedCategory.categoryId) {
+      codePrefix = selectedCategory.categoryId.replace(/^CAT-/, '').toUpperCase().trim();
+    }
+    if (!codePrefix) codePrefix = 'GEN';
+
+    // Pattern to find existing asset sequence numbers matching WANG-{codePrefix}-{number}
+    const escapedPrefix = codePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^WANG-${escapedPrefix}-(\\d+)$`, 'i');
+    let maxSeq = 0;
+
+    existingAssets.forEach(a => {
+      const match = a.assetId.trim().match(pattern);
+      if (match && match[1]) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    });
+
+    const nextSeq = String(maxSeq + 1).padStart(3, '0');
+    setAssetId(`WANG-${codePrefix}-${nextSeq}`);
   };
 
   if (!isOpen) return null;
@@ -233,7 +252,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
               >
                 {categories.map((c) => (
                   <option key={c.categoryId} value={c.categoryId}>
-                    {c.categoryName} ({c.categoryId})
+                    {c.categoryName} ({c.categoryId.replace(/^CAT-/, '')})
                   </option>
                 ))}
               </select>

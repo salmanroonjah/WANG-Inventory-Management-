@@ -365,8 +365,80 @@ app.get('/api/categories', (_req: Request, res: Response) => {
   res.json({ success: true, categories: db.getCategories() });
 });
 
+app.post('/api/categories', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Staff members cannot create asset categories.' });
+  }
+  const result = db.createCategory(req.body, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.status(201).json(result);
+});
+
+app.put('/api/categories/:id', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Staff members cannot modify asset categories.' });
+  }
+  const result = db.updateCategory(req.params.id, req.body, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.delete('/api/categories/:id', (req: Request, res: Response) => {
+  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory & Finance Admin' && (activeSession.role as any) !== 'Inventory Manager') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Administrative roles can delete categories.' });
+  }
+  const result = db.deleteCategory(req.params.id, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
+});
+
 app.get('/api/locations', (_req: Request, res: Response) => {
   res.json({ success: true, locations: db.getLocations() });
+});
+
+app.post('/api/locations', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Staff members cannot create location records.' });
+  }
+  const result = db.createLocation(req.body, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.status(201).json(result);
+});
+
+app.put('/api/locations/:id', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Staff members cannot modify location records.' });
+  }
+  const result = db.updateLocation(req.params.id, req.body, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.delete('/api/locations/:id', (req: Request, res: Response) => {
+  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory & Finance Admin' && (activeSession.role as any) !== 'Inventory Manager') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Administrative roles can delete locations.' });
+  }
+  const result = db.deleteLocation(req.params.id, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
 });
 
 // --- CONSUMABLES ---

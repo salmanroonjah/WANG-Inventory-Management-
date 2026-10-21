@@ -29,7 +29,11 @@ import {
   fetchConsumablesFromFirestore,
   saveConsumableToFirestore,
   fetchCategoriesFromFirestore,
+  saveCategoryToFirestore,
+  deleteCategoryFromFirestore,
   fetchLocationsFromFirestore,
+  saveLocationToFirestore,
+  deleteLocationFromFirestore,
   fetchRequestsFromFirestore,
   saveRequestToFirestore,
   fetchMaintenanceFromFirestore,
@@ -1058,6 +1062,112 @@ export const api = {
     return getLocalStore().categories;
   },
 
+  async createCategory(payload: Partial<Category>): Promise<{ success: boolean; message: string; category: Category }> {
+    const data = await safeFetch<any>('/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const store = getLocalStore();
+    let code = payload.categoryId?.trim().toUpperCase();
+    if (!code) {
+      code = (payload.categoryName || 'GEN').trim().substring(0, 4).toUpperCase();
+      let counter = 1;
+      const baseCode = code;
+      while (store.categories.some((c: any) => c.categoryId.toUpperCase() === code)) {
+        code = `${baseCode}${counter++}`;
+      }
+    }
+
+    if (store.categories.some((c: any) => c.categoryId.toUpperCase() === code)) {
+      throw new Error(`Category code "${code}" already exists.`);
+    }
+
+    const newCat: Category = {
+      categoryId: code,
+      categoryName: payload.categoryName?.trim() || 'New Category',
+      description: payload.description?.trim() || '',
+      totalAssets: 0,
+      iconName: payload.iconName || 'FolderTree'
+    };
+
+    store.categories.push(newCat);
+    saveLocalStore(store);
+    saveCategoryToFirestore(newCat).catch(() => {});
+
+    if (data && data.success) return data;
+    return { success: true, message: `Category ${newCat.categoryName} created successfully`, category: newCat };
+  },
+
+  async updateCategory(id: string, updates: Partial<Category>): Promise<{ success: boolean; message: string; category: Category }> {
+    const cleanId = id.trim().toUpperCase();
+    const data = await safeFetch<any>(`/categories/${encodeURIComponent(cleanId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const store = getLocalStore();
+    const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === cleanId);
+    if (cat) {
+      const oldName = cat.categoryName;
+      const oldCategoryId = cat.categoryId;
+
+      let newCategoryId = updates.categoryId?.trim().toUpperCase();
+      if (newCategoryId && newCategoryId !== oldCategoryId) {
+        if (store.categories.some((c: any) => c.categoryId.toUpperCase() === newCategoryId && c.categoryId.toUpperCase() !== cleanId)) {
+          throw new Error(`Category code "${newCategoryId}" is already used by another category.`);
+        }
+        cat.categoryId = newCategoryId;
+      }
+
+      if (updates.categoryName) cat.categoryName = updates.categoryName.trim();
+      if (updates.description !== undefined) cat.description = updates.description.trim();
+      if (updates.iconName) cat.iconName = updates.iconName;
+
+      // Update all linked assets if categoryId or categoryName changed
+      store.assets.forEach((a: any) => {
+        if (a.categoryId.toUpperCase() === cleanId || a.categoryId.toUpperCase() === oldCategoryId.toUpperCase()) {
+          a.categoryId = cat.categoryId;
+          if (updates.categoryName) a.categoryName = cat.categoryName;
+        }
+      });
+
+      saveLocalStore(store);
+      saveCategoryToFirestore(cat).catch(() => {});
+    }
+
+    if (data && data.success) return data;
+    if (!cat) throw new Error('Category not found');
+    return { success: true, message: `Category ${cat.categoryName} updated successfully`, category: cat };
+  },
+
+  async deleteCategory(id: string): Promise<{ success: boolean; message: string }> {
+    const cleanId = id.trim().toUpperCase();
+    const store = getLocalStore();
+    const linkedAssets = store.assets.filter((a: any) => a.categoryId.toUpperCase() === cleanId);
+    if (linkedAssets.length > 0) {
+      throw new Error(`Cannot delete: Category "${cleanId}" has ${linkedAssets.length} active registered asset(s). Please reassign assets first.`);
+    }
+
+    const data = await safeFetch<any>(`/categories/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE'
+    });
+
+    const idx = store.categories.findIndex((c: any) => c.categoryId.toUpperCase() === cleanId);
+    if (idx !== -1) {
+      const removed = store.categories.splice(idx, 1)[0];
+      deleteCategoryFromFirestore(cleanId).catch(() => {});
+      saveLocalStore(store);
+      if (data && data.success) return data;
+      return { success: true, message: `Category ${removed.categoryName} deleted successfully` };
+    }
+
+    if (data && data.success) return data;
+    return { success: true, message: 'Category deleted' };
+  },
+
   async getLocations(): Promise<LocationRecord[]> {
     const data = await safeFetch<{ success: boolean; locations: LocationRecord[] }>(`/locations`);
     if (data && data.success) return data.locations;
@@ -1069,6 +1179,141 @@ export const api = {
       return cloudLocs;
     }
     return getLocalStore().locations;
+  },
+
+  async createLocation(payload: Partial<LocationRecord>): Promise<{ success: boolean; message: string; location: LocationRecord }> {
+    const data = await safeFetch<any>('/locations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const store = getLocalStore();
+    let id = payload.locationId?.trim().toUpperCase();
+    if (!id) {
+      const prefix = (payload.officeBranch || 'HO').trim().substring(0, 3).toUpperCase();
+      const roomNum = (payload.room?.match(/\d+/) || ['01'])[0];
+      id = `LOC-${prefix}-${roomNum}`;
+      let counter = 1;
+      while (store.locations.some((l: any) => l.locationId.toUpperCase() === id)) {
+        id = `LOC-${prefix}-${roomNum}-${counter++}`;
+      }
+    }
+
+    if (store.locations.some((l: any) => l.locationId.toUpperCase() === id)) {
+      throw new Error(`Location ID "${id}" already exists.`);
+    }
+
+    const newLoc: LocationRecord = {
+      locationId: id,
+      officeBranch: payload.officeBranch?.trim() || 'Head Office - Islamabad',
+      building: payload.building?.trim() || 'Main Building',
+      floor: payload.floor?.trim() || 'Ground Floor',
+      room: payload.room?.trim() || 'Room 1',
+      description: payload.description?.trim() || '',
+      isStore: Boolean(payload.isStore),
+      assetCount: 0
+    };
+
+    store.locations.push(newLoc);
+    saveLocalStore(store);
+    saveLocationToFirestore(newLoc).catch(() => {});
+
+    if (data && data.success) return data;
+    return { success: true, message: `Location ${newLoc.room} created successfully`, location: newLoc };
+  },
+
+  async updateLocation(id: string, updates: Partial<LocationRecord>): Promise<{ success: boolean; message: string; location: LocationRecord }> {
+    const cleanId = id.trim().toUpperCase();
+    const data = await safeFetch<any>(`/locations/${encodeURIComponent(cleanId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const store = getLocalStore();
+    const loc = store.locations.find((l: any) => l.locationId.toUpperCase() === cleanId);
+    if (loc) {
+      const oldBranch = loc.officeBranch;
+      const oldRoom = loc.room;
+
+      if (updates.officeBranch) loc.officeBranch = updates.officeBranch.trim();
+      if (updates.building) loc.building = updates.building.trim();
+      if (updates.floor) loc.floor = updates.floor.trim();
+      if (updates.room) loc.room = updates.room.trim();
+      if (updates.description !== undefined) loc.description = updates.description.trim();
+      if (updates.isStore !== undefined) loc.isStore = Boolean(updates.isStore);
+
+      // Update assets if branch or room changed
+      if ((updates.officeBranch && updates.officeBranch !== oldBranch) || (updates.room && updates.room !== oldRoom)) {
+        store.assets.forEach((a: any) => {
+          if (a.officeBranch === oldBranch && a.buildingRoom.includes(oldRoom)) {
+            if (updates.officeBranch) a.officeBranch = updates.officeBranch.trim();
+            if (updates.room) a.buildingRoom = a.buildingRoom.replace(oldRoom, updates.room.trim());
+          }
+        });
+      }
+
+      saveLocalStore(store);
+      saveLocationToFirestore(loc).catch(() => {});
+    }
+
+    if (data && data.success) return data;
+    if (!loc) throw new Error('Location not found');
+    return { success: true, message: `Location ${loc.room} updated successfully`, location: loc };
+  },
+
+  async deleteLocation(id: string): Promise<{ success: boolean; message: string }> {
+    const cleanId = id.trim().toUpperCase();
+    const store = getLocalStore();
+    const loc = store.locations.find((l: any) => l.locationId.toUpperCase() === cleanId);
+    
+    if (loc) {
+      const linkedAssets = store.assets.filter((a: any) => a.officeBranch === loc.officeBranch && a.buildingRoom.includes(loc.room));
+      if (linkedAssets.length > 0) {
+        throw new Error(`Cannot delete: Location "${loc.room}" at ${loc.officeBranch} has ${linkedAssets.length} active registered asset(s). Please reassign assets first.`);
+      }
+    }
+
+    const data = await safeFetch<any>(`/locations/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE'
+    });
+
+    const idx = store.locations.findIndex((l: any) => l.locationId.toUpperCase() === cleanId);
+    if (idx !== -1) {
+      const removed = store.locations.splice(idx, 1)[0];
+      deleteLocationFromFirestore(cleanId).catch(() => {});
+      saveLocalStore(store);
+      if (data && data.success) return data;
+      return { success: true, message: `Location ${removed.room} deleted successfully` };
+    }
+
+    if (data && data.success) return data;
+    return { success: true, message: 'Location deleted' };
+  },
+
+  async updateBuildingInfo(oldCity: string, oldBuilding: string, newCity: string, newBuilding: string): Promise<{ success: boolean; message: string }> {
+    const store = getLocalStore();
+    let updatedCount = 0;
+
+    store.locations.forEach((l: any) => {
+      if (l.officeBranch?.toLowerCase() === oldCity.toLowerCase() && l.building?.toLowerCase() === oldBuilding.toLowerCase()) {
+        l.officeBranch = newCity.trim();
+        l.building = newBuilding.trim();
+        updatedCount++;
+        saveLocationToFirestore(l).catch(() => {});
+      }
+    });
+
+    // Also update matching asset records
+    store.assets.forEach((a: any) => {
+      if (a.officeBranch?.toLowerCase() === oldCity.toLowerCase()) {
+        a.officeBranch = newCity.trim();
+      }
+    });
+
+    saveLocalStore(store);
+    return { success: true, message: `Building details updated across ${updatedCount} room records` };
   },
 
   async getConsumables(): Promise<ConsumableItem[]> {

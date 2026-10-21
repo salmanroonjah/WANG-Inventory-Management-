@@ -196,6 +196,24 @@ export async function fetchCategoriesFromFirestore(): Promise<Category[] | null>
   }
 }
 
+export async function saveCategoryToFirestore(cat: Category): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    await setDoc(doc(db, 'categories', cat.categoryId), cat);
+  } catch (err) {
+    console.warn('[Firestore] Failed to save category', err);
+  }
+}
+
+export async function deleteCategoryFromFirestore(categoryId: string): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    await deleteDoc(doc(db, 'categories', categoryId));
+  } catch (err) {
+    console.warn('[Firestore] Failed to delete category', err);
+  }
+}
+
 export async function fetchLocationsFromFirestore(): Promise<LocationRecord[] | null> {
   try {
     await ensureFirebaseAuth();
@@ -204,6 +222,24 @@ export async function fetchLocationsFromFirestore(): Promise<LocationRecord[] | 
     return snap.docs.map(d => d.data() as LocationRecord);
   } catch (err) {
     return null;
+  }
+}
+
+export async function saveLocationToFirestore(loc: LocationRecord): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    await setDoc(doc(db, 'locations', loc.locationId), loc);
+  } catch (err) {
+    console.warn('[Firestore] Failed to save location', err);
+  }
+}
+
+export async function deleteLocationFromFirestore(locationId: string): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    await deleteDoc(doc(db, 'locations', locationId));
+  } catch (err) {
+    console.warn('[Firestore] Failed to delete location', err);
   }
 }
 

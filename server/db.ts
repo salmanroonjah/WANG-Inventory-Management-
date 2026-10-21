@@ -1606,6 +1606,249 @@ class Database {
     return { success: true, message: `Employee ${emp.fullName} removed from registry.` };
   }
 
+  // --- Category Management ---
+  public createCategory(data: Partial<Category>, performedBy: { userId: string; name: string }): { success: boolean; message: string; category?: Category } {
+    if (!data.categoryName || !data.categoryName.trim()) {
+      return { success: false, message: 'Category Name is required.' };
+    }
+
+    let code = data.categoryId?.trim().toUpperCase();
+    if (!code) {
+      code = data.categoryName.trim().substring(0, 4).toUpperCase();
+      let counter = 1;
+      const baseCode = code;
+      while (this.data.categories.some(c => c.categoryId.toUpperCase() === code)) {
+        code = `${baseCode}${counter++}`;
+      }
+    }
+
+    if (this.data.categories.some(c => c.categoryId.toUpperCase() === code)) {
+      return { success: false, message: `Category code "${code}" already exists.` };
+    }
+
+    const newCat: Category = {
+      categoryId: code,
+      categoryName: data.categoryName.trim(),
+      description: data.description?.trim() || '',
+      totalAssets: 0,
+      iconName: data.iconName || 'FolderTree'
+    };
+
+    this.data.categories.push(newCat);
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'CREATE_CATEGORY',
+      recordType: 'Category',
+      recordId: newCat.categoryId,
+      details: `New asset category registered: ${newCat.categoryName} (${newCat.categoryId})`
+    });
+
+    this.saveData();
+    return { success: true, message: `Category ${newCat.categoryName} created successfully.`, category: newCat };
+  }
+
+  public updateCategory(categoryId: string, updates: Partial<Category>, performedBy: { userId: string; name: string }): { success: boolean; message: string; category?: Category } {
+    const cleanId = categoryId.trim().toUpperCase();
+    const cat = this.data.categories.find(c => c.categoryId.toUpperCase() === cleanId);
+    if (!cat) {
+      return { success: false, message: `Category "${cleanId}" not found.` };
+    }
+
+    const oldName = cat.categoryName;
+    const oldId = cat.categoryId;
+
+    let newId = updates.categoryId?.trim().toUpperCase();
+    if (newId && newId !== oldId) {
+      if (this.data.categories.some(c => c.categoryId.toUpperCase() === newId && c.categoryId.toUpperCase() !== cleanId)) {
+        return { success: false, message: `Category code "${newId}" is already in use by another category.` };
+      }
+      cat.categoryId = newId;
+    }
+
+    if (updates.categoryName) cat.categoryName = updates.categoryName.trim();
+    if (updates.description !== undefined) cat.description = updates.description.trim();
+    if (updates.iconName) cat.iconName = updates.iconName;
+
+    // If categoryId or categoryName changed, update linked assets
+    for (const asset of this.data.assets) {
+      if (asset.categoryId.toUpperCase() === cleanId || asset.categoryId.toUpperCase() === oldId.toUpperCase()) {
+        asset.categoryId = cat.categoryId;
+        if (updates.categoryName) asset.categoryName = cat.categoryName.trim();
+      }
+    }
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'UPDATE_CATEGORY',
+      recordType: 'Category',
+      recordId: cat.categoryId,
+      details: `Updated category ${cat.categoryName} (${cat.categoryId})`
+    });
+
+    this.saveData();
+    const count = this.data.assets.filter(a => a.categoryId === cat.categoryId).length;
+    return { success: true, message: `Category ${cat.categoryName} updated successfully.`, category: { ...cat, totalAssets: count } };
+  }
+
+  public deleteCategory(categoryId: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const cleanId = categoryId.trim().toUpperCase();
+    const index = this.data.categories.findIndex(c => c.categoryId.toUpperCase() === cleanId);
+    if (index === -1) {
+      return { success: false, message: `Category "${cleanId}" not found.` };
+    }
+
+    const cat = this.data.categories[index];
+    const linkedAssets = this.data.assets.filter(a => a.categoryId === cleanId);
+    if (linkedAssets.length > 0) {
+      return { 
+        success: false, 
+        message: `Cannot delete category: "${cat.categoryName}" has ${linkedAssets.length} active registered asset(s). Reassign them first.` 
+      };
+    }
+
+    this.data.categories.splice(index, 1);
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_CATEGORY',
+      recordType: 'Category',
+      recordId: cleanId,
+      details: `Removed category: ${cat.categoryName} (${cleanId})`
+    });
+
+    this.saveData();
+    return { success: true, message: `Category ${cat.categoryName} deleted successfully.` };
+  }
+
+  // --- Location / Building / Room Management ---
+  public createLocation(data: Partial<LocationRecord>, performedBy: { userId: string; name: string }): { success: boolean; message: string; location?: LocationRecord } {
+    if (!data.officeBranch || !data.officeBranch.trim()) {
+      return { success: false, message: 'Office Branch / City is required.' };
+    }
+    if (!data.room || !data.room.trim()) {
+      return { success: false, message: 'Room Name / Number is required.' };
+    }
+
+    let id = data.locationId?.trim().toUpperCase();
+    if (!id) {
+      const branchPrefix = data.officeBranch.trim().substring(0, 3).toUpperCase();
+      const roomNum = (data.room.match(/\d+/) || ['01'])[0];
+      id = `LOC-${branchPrefix}-${roomNum}`;
+      let counter = 1;
+      const baseId = id;
+      while (this.data.locations.some(l => l.locationId.toUpperCase() === id)) {
+        id = `${baseId}-${counter++}`;
+      }
+    }
+
+    if (this.data.locations.some(l => l.locationId.toUpperCase() === id)) {
+      return { success: false, message: `Location ID "${id}" already exists.` };
+    }
+
+    const newLoc: LocationRecord = {
+      locationId: id,
+      officeBranch: data.officeBranch.trim(),
+      building: data.building?.trim() || 'Main Building',
+      floor: data.floor?.trim() || 'Ground Floor',
+      room: data.room.trim(),
+      description: data.description?.trim() || '',
+      isStore: Boolean(data.isStore),
+      assetCount: 0
+    };
+
+    this.data.locations.push(newLoc);
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'CREATE_LOCATION',
+      recordType: 'Location',
+      recordId: newLoc.locationId,
+      details: `New office room registered: ${newLoc.officeBranch} - ${newLoc.building} - ${newLoc.room}`
+    });
+
+    this.saveData();
+    return { success: true, message: `Room/Office ${newLoc.room} at ${newLoc.officeBranch} created successfully.`, location: newLoc };
+  }
+
+  public updateLocation(locationId: string, updates: Partial<LocationRecord>, performedBy: { userId: string; name: string }): { success: boolean; message: string; location?: LocationRecord } {
+    const cleanId = locationId.trim().toUpperCase();
+    const loc = this.data.locations.find(l => l.locationId.toUpperCase() === cleanId);
+    if (!loc) {
+      return { success: false, message: `Location "${cleanId}" not found.` };
+    }
+
+    const oldBranch = loc.officeBranch;
+    const oldRoom = loc.room;
+
+    if (updates.officeBranch) loc.officeBranch = updates.officeBranch.trim();
+    if (updates.building) loc.building = updates.building.trim();
+    if (updates.floor) loc.floor = updates.floor.trim();
+    if (updates.room) loc.room = updates.room.trim();
+    if (updates.description !== undefined) loc.description = updates.description.trim();
+    if (updates.isStore !== undefined) loc.isStore = Boolean(updates.isStore);
+
+    // Update assets matching old location / room if branch or room updated
+    if ((updates.officeBranch && updates.officeBranch !== oldBranch) || (updates.room && updates.room !== oldRoom)) {
+      for (const asset of this.data.assets) {
+        if (asset.officeBranch === oldBranch && asset.buildingRoom.includes(oldRoom)) {
+          if (updates.officeBranch) asset.officeBranch = updates.officeBranch.trim();
+          if (updates.room) asset.buildingRoom = asset.buildingRoom.replace(oldRoom, updates.room.trim());
+        }
+      }
+    }
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'UPDATE_LOCATION',
+      recordType: 'Location',
+      recordId: loc.locationId,
+      details: `Updated location ${loc.officeBranch} - ${loc.room}`
+    });
+
+    this.saveData();
+    const count = this.data.assets.filter(a => a.officeBranch === loc.officeBranch && a.buildingRoom.includes(loc.room)).length;
+    return { success: true, message: `Location ${loc.room} updated successfully.`, location: { ...loc, assetCount: count } };
+  }
+
+  public deleteLocation(locationId: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const cleanId = locationId.trim().toUpperCase();
+    const index = this.data.locations.findIndex(l => l.locationId.toUpperCase() === cleanId);
+    if (index === -1) {
+      return { success: false, message: `Location "${cleanId}" not found.` };
+    }
+
+    const loc = this.data.locations[index];
+    const linkedAssets = this.data.assets.filter(a => a.officeBranch === loc.officeBranch && a.buildingRoom.includes(loc.room));
+    if (linkedAssets.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete location: "${loc.room}" at ${loc.officeBranch} has ${linkedAssets.length} active registered asset(s). Reassign assets first.`
+      };
+    }
+
+    this.data.locations.splice(index, 1);
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_LOCATION',
+      recordType: 'Location',
+      recordId: cleanId,
+      details: `Removed location: ${loc.officeBranch} - ${loc.room}`
+    });
+
+    this.saveData();
+    return { success: true, message: `Location ${loc.room} deleted successfully.` };
+  }
+
   // --- Consumables Transactions ---
   public adjustConsumableStock(params: {
     itemCode: string;

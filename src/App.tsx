@@ -369,6 +369,9 @@ export default function App() {
             {currentTab === 'categories' && (
               <CategoriesView
                 categories={categories}
+                allAssets={assets}
+                canManage={canManage}
+                onRefreshData={loadData}
                 onSelectCategory={(catId) => {
                   setCurrentTab('inventory');
                 }}
@@ -378,6 +381,9 @@ export default function App() {
             {currentTab === 'locations' && (
               <LocationsView
                 locations={locations}
+                allAssets={assets}
+                canManage={canManage}
+                onRefreshData={loadData}
                 onSelectLocation={(locStr) => {
                   setCurrentTab('inventory');
                 }}
