@@ -1316,6 +1316,36 @@ export const api = {
     return { success: true, message: `Building details updated across ${updatedCount} room records` };
   },
 
+  async deleteBuilding(city: string, buildingName: string): Promise<{ success: boolean; message: string }> {
+    const store = getLocalStore();
+    const roomsInBuilding = store.locations.filter(
+      (l: any) => l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase()
+    );
+
+    // Check if any asset is assigned to any room in this building
+    for (const roomLoc of roomsInBuilding) {
+      const linkedAssets = store.assets.filter(
+        (a: any) => a.officeBranch?.toLowerCase() === city.toLowerCase() && a.buildingRoom?.toLowerCase().includes(roomLoc.room.toLowerCase())
+      );
+      if (linkedAssets.length > 0) {
+        throw new Error(`Cannot delete building "${buildingName}": Room "${roomLoc.room}" has ${linkedAssets.length} active asset(s). Reassign assets first.`);
+      }
+    }
+
+    // Delete all room location records under this building
+    const deletedCount = roomsInBuilding.length;
+    store.locations = store.locations.filter((l: any) => {
+      const matches = l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase();
+      if (matches) {
+        deleteLocationFromFirestore(l.locationId).catch(() => {});
+      }
+      return !matches;
+    });
+
+    saveLocalStore(store);
+    return { success: true, message: `Building "${buildingName}" in ${city} (${deletedCount} rooms) deleted successfully.` };
+  },
+
   async getConsumables(): Promise<ConsumableItem[]> {
     const data = await safeFetch<{ success: boolean; consumables: ConsumableItem[] }>(`/consumables`);
     if (data && data.success) return data.consumables;

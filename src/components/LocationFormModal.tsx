@@ -8,10 +8,7 @@ import {
   Home, 
   FileText, 
   AlertCircle, 
-  PlusCircle, 
-  Edit3, 
   Warehouse,
-  CheckCircle2,
   Hash
 } from 'lucide-react';
 import { LocationRecord } from '../types/inventory.js';
@@ -28,21 +25,6 @@ interface LocationFormModalProps {
   onClose: () => void;
   onSuccess: () => void;
 }
-
-const PRESET_BRANCHES = [
-  'Bela',
-  'Islamabad',
-  'Quetta',
-  'Karachi',
-  'Lasbela'
-];
-
-const PRESET_BUILDINGS = [
-  'Head Office Building',
-  'Regional Campus Building',
-  'WANG Training Center',
-  'Community Complex'
-];
 
 const PRESET_FLOORS = [
   'Ground Floor',
@@ -67,62 +49,35 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
   const isEditingRoom = Boolean(locationToEdit);
   const isEditingBuilding = Boolean(buildingToEdit);
 
-  // Form State
-  const [officeBranch, setOfficeBranch] = useState('Bela');
-  const [customBranch, setCustomBranch] = useState('');
-  const [useCustomBranch, setUseCustomBranch] = useState(false);
-
-  const [building, setBuilding] = useState('Head Office Building');
-  const [customBuilding, setCustomBuilding] = useState('');
-  const [useCustomBuilding, setUseCustomBuilding] = useState(false);
+  // Direct text inputs for city and building name
+  const [officeBranch, setOfficeBranch] = useState('');
+  const [building, setBuilding] = useState('');
 
   const [floor, setFloor] = useState('Ground Floor');
   const [roomNumber, setRoomNumber] = useState(''); // e.g., "Room No 1"
-  const [roomName, setRoomName] = useState(''); // e.g., "WANG Office" or "Executive Director Office"
+  const [roomName, setRoomName] = useState(''); // e.g., "WANG Office"
   const [description, setDescription] = useState('');
   const [isStore, setIsStore] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const allBranches = Array.from(new Set([...PRESET_BRANCHES, ...existingBranches])).filter(Boolean);
-  const allBuildings = Array.from(new Set([...PRESET_BUILDINGS, ...existingBuildings])).filter(Boolean);
+  // Clean unique suggestions for datalist
+  const allBranches = Array.from(new Set(existingBranches.filter(Boolean))).sort();
+  const allBuildings = Array.from(new Set(existingBuildings.filter(Boolean))).sort();
 
   useEffect(() => {
     if (buildingToEdit) {
       // Editing building details
-      setOfficeBranch(buildingToEdit.city);
-      setCustomBranch('');
-      setUseCustomBranch(false);
-
-      setBuilding(buildingToEdit.buildingName);
-      setCustomBuilding('');
-      setUseCustomBuilding(false);
+      setOfficeBranch(buildingToEdit.city || '');
+      setBuilding(buildingToEdit.buildingName || '');
     } else if (locationToEdit) {
       // Editing room details
-      if (allBranches.includes(locationToEdit.officeBranch)) {
-        setOfficeBranch(locationToEdit.officeBranch);
-        setUseCustomBranch(false);
-        setCustomBranch('');
-      } else {
-        setOfficeBranch('OTHER');
-        setUseCustomBranch(true);
-        setCustomBranch(locationToEdit.officeBranch);
-      }
-
-      if (allBuildings.includes(locationToEdit.building)) {
-        setBuilding(locationToEdit.building);
-        setUseCustomBuilding(false);
-        setCustomBuilding('');
-      } else {
-        setBuilding('OTHER');
-        setUseCustomBuilding(true);
-        setCustomBuilding(locationToEdit.building);
-      }
-
+      setOfficeBranch(locationToEdit.officeBranch || '');
+      setBuilding(locationToEdit.building || '');
       setFloor(locationToEdit.floor || 'Ground Floor');
 
-      // Parse room number vs room name if formatted as "Room No 1: WANG Office" or "Room 1 - WANG Office"
+      // Parse room number vs room name if formatted as "Room No 1: WANG Office"
       const rawRoom = locationToEdit.room || '';
       if (rawRoom.includes(':')) {
         const parts = rawRoom.split(':');
@@ -140,27 +95,9 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
       setDescription(locationToEdit.description || '');
       setIsStore(Boolean(locationToEdit.isStore));
     } else {
-      // Adding new room
-      const defaultCity = preselectedCity || allBranches[0] || 'Bela';
-      setOfficeBranch(allBranches.includes(defaultCity) ? defaultCity : 'OTHER');
-      if (!allBranches.includes(defaultCity)) {
-        setUseCustomBranch(true);
-        setCustomBranch(defaultCity);
-      } else {
-        setUseCustomBranch(false);
-        setCustomBranch('');
-      }
-
-      const defaultBuilding = preselectedBuilding || allBuildings[0] || 'Head Office Building';
-      setBuilding(allBuildings.includes(defaultBuilding) ? defaultBuilding : 'OTHER');
-      if (!allBuildings.includes(defaultBuilding)) {
-        setUseCustomBuilding(true);
-        setCustomBuilding(defaultBuilding);
-      } else {
-        setUseCustomBuilding(false);
-        setCustomBuilding('');
-      }
-
+      // Adding new room or building: leave blank unless preselected context passed
+      setOfficeBranch(preselectedCity || '');
+      setBuilding(preselectedBuilding || '');
       setFloor('Ground Floor');
       setRoomNumber('');
       setRoomName('');
@@ -174,8 +111,8 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalBranch = useCustomBranch ? customBranch.trim() : officeBranch;
-    const finalBuilding = useCustomBuilding ? customBuilding.trim() : building;
+    const finalBranch = officeBranch.trim();
+    const finalBuilding = building.trim();
 
     if (!finalBranch) {
       setError('City / Location name is required.');
@@ -209,7 +146,7 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
 
     // Room Validation
     if (!roomName.trim() && !roomNumber.trim()) {
-      setError('Please provide a Room Name (e.g. WANG Office) or Room Number (e.g. Room No 1).');
+      setError('Please type a Room Name (e.g. WANG Office) or Room Number (e.g. Room No 1).');
       return;
     }
 
@@ -265,14 +202,14 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
                   ? 'Edit Building Details'
                   : isEditingRoom 
                   ? 'Edit Room / Office' 
-                  : 'Add Room to Building'}
+                  : 'Add Room / Office to Building'}
               </h2>
               <p className="text-xs text-slate-200 mt-0.5">
                 {isEditingBuilding
                   ? `Update name or city location for ${buildingToEdit?.buildingName}`
                   : isEditingRoom
                   ? 'Update room name, floor level, or facilities'
-                  : `Register room inside ${preselectedBuilding || 'selected building'}`}
+                  : 'Type city name, building name & room details below'}
               </p>
             </div>
           </div>
@@ -294,106 +231,63 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
             </div>
           )}
 
+          {/* Datalists for autocomplete */}
+          <datalist id="existing-cities-list">
+            {allBranches.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+
+          <datalist id="existing-buildings-list">
+            {allBuildings.map((b) => (
+              <option key={b} value={b} />
+            ))}
+          </datalist>
+
           {/* City / Location & Building */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* City Selection */}
+            {/* City Input */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                City / Location <span className="text-red-500">*</span>
+                City / Location Name <span className="text-red-500">*</span>
               </label>
-              {!useCustomBranch ? (
-                <div className="relative">
-                  <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <select
-                    value={officeBranch}
-                    onChange={(e) => {
-                      if (e.target.value === 'OTHER') {
-                        setUseCustomBranch(true);
-                        setCustomBranch('');
-                      } else {
-                        setOfficeBranch(e.target.value);
-                      }
-                    }}
-                    className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#003279] text-slate-900 bg-white font-medium"
-                  >
-                    {allBranches.map((b) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                    <option value="OTHER">+ Add New City...</option>
-                  </select>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  <div className="relative">
-                    <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      required
-                      value={customBranch}
-                      onChange={(e) => setCustomBranch(e.target.value)}
-                      placeholder="e.g. Bela, Karachi, Quetta"
-                      className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl text-slate-900"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setUseCustomBranch(false)}
-                    className="text-[10px] text-[#003279] font-bold hover:underline cursor-pointer"
-                  >
-                    ← Select from list
-                  </button>
-                </div>
-              )}
+              <div className="relative">
+                <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  required
+                  list="existing-cities-list"
+                  value={officeBranch}
+                  onChange={(e) => setOfficeBranch(e.target.value)}
+                  placeholder="e.g. Bela, Karachi, Quetta..."
+                  className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#003279] text-slate-900 font-bold"
+                />
+              </div>
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Type any city or select from past cities.
+              </span>
             </div>
 
-            {/* Building Selection */}
+            {/* Building Input */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                 Building Name <span className="text-red-500">*</span>
               </label>
-              {!useCustomBuilding ? (
-                <div className="relative">
-                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <select
-                    value={building}
-                    onChange={(e) => {
-                      if (e.target.value === 'OTHER') {
-                        setUseCustomBuilding(true);
-                        setCustomBuilding('');
-                      } else {
-                        setBuilding(e.target.value);
-                      }
-                    }}
-                    className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#003279] text-slate-900 bg-white font-medium"
-                  >
-                    {allBuildings.map((b) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                    <option value="OTHER">+ Add Custom Building...</option>
-                  </select>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      required
-                      value={customBuilding}
-                      onChange={(e) => setCustomBuilding(e.target.value)}
-                      placeholder="e.g. Head Office Building, Science Block"
-                      className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl text-slate-900"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setUseCustomBuilding(false)}
-                    className="text-[10px] text-[#003279] font-bold hover:underline cursor-pointer"
-                  >
-                    ← Select from list
-                  </button>
-                </div>
-              )}
+              <div className="relative">
+                <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  required
+                  list="existing-buildings-list"
+                  value={building}
+                  onChange={(e) => setBuilding(e.target.value)}
+                  placeholder="e.g. Head Office Building..."
+                  className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#003279] text-slate-900 font-bold"
+                />
+              </div>
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Type any building name.
+              </span>
             </div>
           </div>
 
@@ -428,7 +322,7 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
                       required
                       value={roomName}
                       onChange={(e) => setRoomName(e.target.value)}
-                      placeholder="e.g. WANG Office, WALI Lab, AI Studio"
+                      placeholder="e.g. WANG Office, WALI Lab, Executive Director Office"
                       className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#003279] text-slate-900 font-bold"
                     />
                   </div>
@@ -492,7 +386,7 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex items-center justify-between text-slate-700">
                 <span className="font-medium text-slate-500">Preview Full Room Record:</span>
                 <span className="font-extrabold text-[#003279] bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
-                  {useCustomBranch ? customBranch || 'City' : officeBranch} • {useCustomBuilding ? customBuilding || 'Building' : building} • {floor} ({roomNumber ? `${roomNumber}: ` : ''}{roomName || 'Room Name'})
+                  {officeBranch || 'City'} • {building || 'Building'} • {floor} ({roomNumber ? `${roomNumber}: ` : ''}{roomName || 'Room Name'})
                 </span>
               </div>
             </>
