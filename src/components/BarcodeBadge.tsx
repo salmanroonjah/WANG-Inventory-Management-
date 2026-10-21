@@ -2,7 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
 
 interface BarcodeBadgeProps {
-  value: string;
+  value?: string;
+  code?: string;
   width?: number;
   height?: number;
   fontSize?: number;
@@ -12,18 +13,20 @@ interface BarcodeBadgeProps {
 
 export const BarcodeBadge: React.FC<BarcodeBadgeProps> = ({
   value,
+  code,
   width = 1.6,
   height = 48,
   fontSize = 12,
   displayValue = true,
   className = ''
 }) => {
+  const barcodeValue = value || code || '';
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   useEffect(() => {
-    if (svgRef.current && value) {
+    if (svgRef.current && barcodeValue) {
       try {
-        JsBarcode(svgRef.current, value, {
+        JsBarcode(svgRef.current, barcodeValue, {
           format: 'CODE128',
           width,
           height,

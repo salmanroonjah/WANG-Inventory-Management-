@@ -158,6 +158,23 @@ app.delete('/api/assets/:id', (req: Request, res: Response) => {
   res.json(result);
 });
 
+app.post('/api/assets/batch-delete', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee' || activeSession.role === 'Auditor') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Managers and Admins can delete assets.' });
+  }
+
+  const { assetIds } = req.body;
+  if (!Array.isArray(assetIds) || assetIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'assetIds array is required.' });
+  }
+
+  const result = db.deleteMultipleAssets(assetIds, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  res.json(result);
+});
+
 // --- CORE TRANSACTION ENDPOINTS: ISSUE & RETURN ---
 app.post('/api/assets/issue', (req: Request, res: Response) => {
   // Role verification: Unauthorized users cannot issue

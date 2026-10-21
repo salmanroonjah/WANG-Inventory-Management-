@@ -54,9 +54,17 @@ export async function initFirestoreIfEmpty(fallbackSeed: any): Promise<boolean> 
       batch.set(doc(db, 'employees', emp.employeeId), emp);
     }
 
-    // Seed Assets
+    // Seed Assets (excluding any blacklisted deleted asset)
+    let deletedSet = new Set<string>();
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_DELETED_ASSET_IDS') : null;
+      if (raw) deletedSet = new Set(JSON.parse(raw));
+    } catch {}
+
     for (const asset of fallbackSeed.assets || []) {
-      batch.set(doc(db, 'assets', asset.assetId), asset);
+      if (!deletedSet.has(asset.assetId?.toUpperCase())) {
+        batch.set(doc(db, 'assets', asset.assetId), asset);
+      }
     }
 
     // Seed Consumables

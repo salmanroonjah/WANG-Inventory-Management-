@@ -35,6 +35,7 @@ export interface DatabaseSchema {
   audits: PhysicalAudit[];
   activityLogs: ActivityLog[];
   sheetsConfig: GoogleSheetsSyncConfig;
+  deletedAssetIds?: string[];
 }
 
 // Ensure data directory exists
@@ -213,6 +214,26 @@ const INITIAL_SEED: DatabaseSchema = {
       description: 'Balochistan community outreach and field operations hub',
       isStore: false,
       assetCount: 2
+    },
+    {
+      locationId: 'LOC-BEL-01',
+      officeBranch: 'Bela',
+      building: 'Head Office Building',
+      floor: 'Ground Floor',
+      room: 'Room 01: Reception Office',
+      description: 'Main reception, visitor registration and general administrative desk',
+      isStore: false,
+      assetCount: 0
+    },
+    {
+      locationId: 'LOC-BEL-02',
+      officeBranch: 'Bela',
+      building: 'Head Office Building',
+      floor: '1st Floor',
+      room: 'Room 02: WANG Office',
+      description: 'Executive Director leadership office and core operations team workspace',
+      isStore: false,
+      assetCount: 0
     }
   ],
   assets: [
@@ -720,11 +741,16 @@ class Database {
       if (fs.existsSync(DB_FILE)) {
         const fileContent = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(fileContent);
+        const deletedIds = Array.isArray(parsed.deletedAssetIds) ? parsed.deletedAssetIds : [];
+        const rawAssets = Array.isArray(parsed.assets) && parsed.assets.length > 0 ? parsed.assets : INITIAL_SEED.assets;
+        const activeAssets = rawAssets.filter((a: Asset) => !deletedIds.includes(a.assetId?.toUpperCase()));
+
         // Ensure all required fields exist
         return {
           ...INITIAL_SEED,
           ...parsed,
-          assets: parsed.assets || INITIAL_SEED.assets,
+          assets: activeAssets,
+          deletedAssetIds: deletedIds,
           employees: parsed.employees || INITIAL_SEED.employees,
           categories: parsed.categories || INITIAL_SEED.categories,
           locations: parsed.locations || INITIAL_SEED.locations,
@@ -1467,6 +1493,13 @@ class Database {
     const removed = this.data.assets[index];
     this.data.assets.splice(index, 1);
 
+    if (!Array.isArray(this.data.deletedAssetIds)) {
+      this.data.deletedAssetIds = [];
+    }
+    if (!this.data.deletedAssetIds.includes(cleanId)) {
+      this.data.deletedAssetIds.push(cleanId);
+    }
+
     this.logActivity({
       userId: performedBy.userId,
       userName: performedBy.name,
@@ -1479,6 +1512,35 @@ class Database {
 
     this.saveData();
     return { success: true, message: `Asset ${cleanId} permanently deleted.` };
+  }
+
+  public deleteMultipleAssets(assetIds: string[], performedBy: { userId: string; name: string }): { success: boolean; message: string; deletedCount: number } {
+    const cleanIds = assetIds.map(id => id.trim().toUpperCase());
+    const beforeCount = this.data.assets.length;
+    this.data.assets = this.data.assets.filter(a => !cleanIds.includes(a.assetId.toUpperCase()));
+    const deletedCount = beforeCount - this.data.assets.length;
+
+    if (!Array.isArray(this.data.deletedAssetIds)) {
+      this.data.deletedAssetIds = [];
+    }
+    cleanIds.forEach(id => {
+      if (!this.data.deletedAssetIds!.includes(id)) {
+        this.data.deletedAssetIds!.push(id);
+      }
+    });
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'BATCH_DELETE_ASSETS',
+      recordType: 'Asset',
+      recordId: cleanIds.join(','),
+      details: `Batch deleted ${deletedCount} assets (${cleanIds.slice(0, 5).join(', ')}${cleanIds.length > 5 ? '...' : ''})`
+    });
+
+    this.saveData();
+    return { success: true, message: `Successfully deleted ${deletedCount} assets.`, deletedCount };
   }
 
   /**

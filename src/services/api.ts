@@ -80,7 +80,9 @@ const FALLBACK_SEED = {
     { locationId: 'LOC-HO-101', officeBranch: 'Head Office - Islamabad', building: 'Main Administrative Block', floor: '1st Floor', room: 'Room 101 - Executive Suite', description: 'Executive Director and Board meeting room', isStore: false, assetCount: 1 },
     { locationId: 'LOC-HO-204', officeBranch: 'Head Office - Islamabad', building: 'East Wing', floor: '2nd Floor', room: 'Room 204 - IT & Media Lab', description: 'IT infrastructure, server racks, and media editing', isStore: false, assetCount: 3 },
     { locationId: 'LOC-HO-STR', officeBranch: 'Head Office - Islamabad', building: 'Ground Facility', floor: 'Ground', room: 'Central Store - Bay A', description: 'Primary storage for unissued equipment and consumables', isStore: true, assetCount: 5 },
-    { locationId: 'LOC-QTA-01', officeBranch: 'Field Office - Quetta', building: 'Provincial Office', floor: 'Ground', room: 'Operations Wing - Office 2', description: 'Balochistan community outreach and field operations hub', isStore: false, assetCount: 2 }
+    { locationId: 'LOC-QTA-01', officeBranch: 'Field Office - Quetta', building: 'Provincial Office', floor: 'Ground', room: 'Operations Wing - Office 2', description: 'Balochistan community outreach and field operations hub', isStore: false, assetCount: 2 },
+    { locationId: 'LOC-BEL-01', officeBranch: 'Bela', building: 'Head Office Building', floor: 'Ground Floor', room: 'Room 01: Reception Office', description: 'Main reception, visitor registration and general administrative desk', isStore: false, assetCount: 0 },
+    { locationId: 'LOC-BEL-02', officeBranch: 'Bela', building: 'Head Office Building', floor: '1st Floor', room: 'Room 02: WANG Office', description: 'Executive Director leadership office and core operations team workspace', isStore: false, assetCount: 0 }
   ],
   assets: [
     {
@@ -390,19 +392,46 @@ const FALLBACK_SEED = {
   sheetsConfig: { spreadsheetId: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms', isConfigured: true, tabsFound: { startHere: true, masterAssets: true, categories: true, employeesLocations: true, assetTransactions: true }, totalSyncedRows: 11, autoSyncOnChange: true }
 };
 
+// LocalStorage Deleted Assets Blacklist to prevent resurrection from cloud or fallback seed
+export function getDeletedAssetIds(): Set<string> {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_DELETED_ASSET_IDS') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.map((id: string) => String(id).trim().toUpperCase()));
+    }
+  } catch {}
+  return new Set<string>();
+}
+
+export function addDeletedAssetIds(ids: string[]) {
+  try {
+    if (typeof window === 'undefined') return;
+    const current = getDeletedAssetIds();
+    ids.forEach(id => {
+      if (id) current.add(String(id).trim().toUpperCase());
+    });
+    localStorage.setItem('WANG_DELETED_ASSET_IDS', JSON.stringify(Array.from(current)));
+  } catch {}
+}
+
 // LocalStorage Helper for Static / GitHub Hosting Fallback
 function getLocalStore() {
+  const deletedSet = getDeletedAssetIds();
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_INVENTORY_LOCAL_DB') : null;
     if (raw) {
       const parsed = JSON.parse(raw);
+      const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : FALLBACK_SEED.assets;
+      const cleanAssets = rawAssets.filter((a: any) => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
+
       return {
         user: parsed.user || FALLBACK_SEED.user,
-        categories: Array.isArray(parsed.categories) && parsed.categories.length > 0 ? parsed.categories : FALLBACK_SEED.categories,
-        employees: Array.isArray(parsed.employees) && parsed.employees.length > 0 ? parsed.employees : FALLBACK_SEED.employees,
-        locations: Array.isArray(parsed.locations) && parsed.locations.length > 0 ? parsed.locations : FALLBACK_SEED.locations,
-        assets: Array.isArray(parsed.assets) && parsed.assets.length > 0 ? parsed.assets : FALLBACK_SEED.assets,
-        consumables: Array.isArray(parsed.consumables) && parsed.consumables.length > 0 ? parsed.consumables : FALLBACK_SEED.consumables,
+        categories: Array.isArray(parsed.categories) ? parsed.categories : FALLBACK_SEED.categories,
+        employees: Array.isArray(parsed.employees) ? parsed.employees : FALLBACK_SEED.employees,
+        locations: Array.isArray(parsed.locations) ? parsed.locations : FALLBACK_SEED.locations,
+        assets: cleanAssets,
+        consumables: Array.isArray(parsed.consumables) ? parsed.consumables : FALLBACK_SEED.consumables,
         transactions: Array.isArray(parsed.transactions) ? parsed.transactions : FALLBACK_SEED.transactions,
         requests: Array.isArray(parsed.requests) ? parsed.requests : [],
         maintenance: Array.isArray(parsed.maintenance) ? parsed.maintenance : [],
@@ -414,7 +443,10 @@ function getLocalStore() {
   } catch (e) {
     console.warn('Failed to parse localStorage, resetting to template seed', e);
   }
-  return JSON.parse(JSON.stringify(FALLBACK_SEED));
+  const defaultAssets = FALLBACK_SEED.assets.filter((a: any) => !deletedSet.has(a.assetId.toUpperCase()));
+  const defaultStore = JSON.parse(JSON.stringify(FALLBACK_SEED));
+  defaultStore.assets = defaultAssets;
+  return defaultStore;
 }
 
 function saveLocalStore(data: any) {
@@ -597,15 +629,25 @@ export const api = {
       });
     }
     const data = await safeFetch<{ success: boolean; assets: Asset[] }>(`/assets?${query.toString()}`);
-    if (data && data.success) return data.assets;
+    const deletedSet = getDeletedAssetIds();
+
+    if (data && data.success) {
+      // Filter out any locally blacklisted deleted asset
+      const cleanServerAssets = data.assets.filter(a => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
+      return cleanServerAssets;
+    }
 
     // Check Cloud Firestore for live multi-device sync
     initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
     const cloudAssets = await fetchAllAssetsFromFirestore();
     let list: Asset[] = cloudAssets && cloudAssets.length > 0 ? cloudAssets : getLocalStore().assets;
+
+    // Filter cloud assets with deleted blacklist
+    list = list.filter(a => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
+
     if (cloudAssets && cloudAssets.length > 0) {
       const store = getLocalStore();
-      store.assets = cloudAssets;
+      store.assets = list;
       saveLocalStore(store);
     }
 
@@ -694,15 +736,16 @@ export const api = {
 
   async deleteAsset(id: string): Promise<{ success: boolean; message: string }> {
     const cleanId = id.trim().toUpperCase();
-    const data = await safeFetch<{ success: boolean; message: string }>(`/assets/${encodeURIComponent(cleanId)}`, {
-      method: 'DELETE'
-    });
-    // Always sync local store & Cloud Firestore
-    deleteAssetFromFirestore(cleanId).catch(() => {});
+
+    // 1. Blacklist permanently in localStorage so it can never resurrect
+    addDeletedAssetIds([cleanId]);
+
+    // 2. Remove from local store immediately
     const store = getLocalStore();
     const idx = store.assets.findIndex((a: any) => a.assetId.toUpperCase() === cleanId);
+    let removedAsset: Asset | undefined;
     if (idx !== -1) {
-      const removed = store.assets.splice(idx, 1)[0];
+      removedAsset = store.assets.splice(idx, 1)[0];
       if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
       store.activityLogs.unshift({
         logId: `LOG-${Date.now()}`,
@@ -713,12 +756,65 @@ export const api = {
         action: 'DELETE_ASSET',
         recordType: 'Asset',
         recordId: cleanId,
-        details: `Deleted asset ${removed.itemName} (${cleanId})`
+        details: `Deleted asset ${removedAsset ? removedAsset.itemName : cleanId} (${cleanId})`
       });
       saveLocalStore(store);
     }
+
+    // 3. Await Cloud Firestore deletion so getAssets won't resurrect it
+    try {
+      await deleteAssetFromFirestore(cleanId);
+    } catch (e) {
+      console.warn('[Firestore] Note on deleteAsset:', e);
+    }
+
+    // 4. Delete from backend server if running
+    const data = await safeFetch<{ success: boolean; message: string }>(`/assets/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE'
+    });
+
     if (data && data.success) return data;
-    return { success: true, message: `Asset ${cleanId} deleted successfully` };
+    return { success: true, message: `Asset ${cleanId} permanently deleted` };
+  },
+
+  async deleteMultipleAssets(ids: string[]): Promise<{ success: boolean; message: string; deletedCount: number }> {
+    const cleanIds = ids.map(id => id.trim().toUpperCase());
+
+    // 1. Blacklist permanently in localStorage
+    addDeletedAssetIds(cleanIds);
+
+    // 2. Remove from local store
+    const store = getLocalStore();
+    const beforeCount = store.assets.length;
+    store.assets = store.assets.filter((a: any) => !cleanIds.includes(a.assetId.toUpperCase()));
+    const deletedCount = beforeCount - store.assets.length;
+
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift({
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'BATCH_DELETE_ASSETS',
+      recordType: 'Asset',
+      recordId: cleanIds.join(','),
+      details: `Batch deleted ${deletedCount} assets (${cleanIds.slice(0, 5).join(', ')}${cleanIds.length > 5 ? '...' : ''})`
+    });
+    saveLocalStore(store);
+
+    // 3. Await Firestore deletions concurrently
+    await Promise.all(cleanIds.map(id => deleteAssetFromFirestore(id).catch(() => {})));
+
+    // 4. Delete from backend server
+    const data = await safeFetch<any>('/assets/batch-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assetIds: cleanIds })
+    });
+
+    if (data && data.success) return data;
+    return { success: true, message: `Successfully deleted ${deletedCount} assets`, deletedCount };
   },
 
   exportFullBackup(): string {
@@ -1282,8 +1378,8 @@ export const api = {
     const idx = store.locations.findIndex((l: any) => l.locationId.toUpperCase() === cleanId);
     if (idx !== -1) {
       const removed = store.locations.splice(idx, 1)[0];
-      deleteLocationFromFirestore(cleanId).catch(() => {});
       saveLocalStore(store);
+      await deleteLocationFromFirestore(cleanId).catch(() => {});
       if (data && data.success) return data;
       return { success: true, message: `Location ${removed.room} deleted successfully` };
     }
@@ -1347,15 +1443,14 @@ export const api = {
 
     // Delete all room location records under this building
     const deletedCount = roomsInBuilding.length;
+    const deletedIds: string[] = roomsInBuilding.map((r: any) => r.locationId);
     store.locations = store.locations.filter((l: any) => {
-      const matches = l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase();
-      if (matches) {
-        deleteLocationFromFirestore(l.locationId).catch(() => {});
-      }
-      return !matches;
+      return !(l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase());
     });
 
     saveLocalStore(store);
+    await Promise.all(deletedIds.map((id: string) => deleteLocationFromFirestore(id).catch(() => {})));
+
     if (data && data.success) return data;
     return { success: true, message: `Building "${buildingName}" in ${city} (${deletedCount} rooms) deleted successfully.` };
   },

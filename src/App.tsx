@@ -86,6 +86,10 @@ export default function App() {
   const [voucherData, setVoucherData] = useState<{ asset: Asset; transaction: AssetTransaction } | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Active filters passed into InventoryView when navigating from other views
+  const [inventoryLocationFilter, setInventoryLocationFilter] = useState('all');
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all');
+
   const canManage = currentUser.role === 'Super Admin' || 
     currentUser.role === 'Inventory & Finance Admin' || 
     currentUser.role === 'IT Administrator' || 
@@ -185,12 +189,30 @@ export default function App() {
   };
 
   const handleDeleteAsset = async (assetId: string) => {
+    const cleanId = assetId.trim().toUpperCase();
+    // Optimistic update: remove immediately so it never flickers or resurrects in UI
+    setAssets(prev => prev.filter(a => a.assetId.toUpperCase() !== cleanId));
     try {
-      await api.deleteAsset(assetId);
+      await api.deleteAsset(cleanId);
       await loadData();
     } catch (err: any) {
       console.error('Failed to delete asset:', err);
       alert(err?.message || 'Failed to delete asset.');
+      await loadData();
+    }
+  };
+
+  const handleBatchDeleteAssets = async (assetIds: string[]) => {
+    const cleanIds = assetIds.map(id => id.trim().toUpperCase());
+    // Optimistic update: remove all immediately from UI
+    setAssets(prev => prev.filter(a => !cleanIds.includes(a.assetId.toUpperCase())));
+    try {
+      await api.deleteMultipleAssets(cleanIds);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to batch delete assets:', err);
+      alert(err?.message || 'Failed to delete selected assets.');
+      await loadData();
     }
   };
 
@@ -318,12 +340,15 @@ export default function App() {
                 assets={assets}
                 categories={categories}
                 locations={locations}
+                initialLocationFilter={inventoryLocationFilter}
+                initialCategoryFilter={inventoryCategoryFilter}
                 onOpenDetailModal={handleOpenDetailModal}
                 onOpenCreateModal={() => setIsCreateModalOpen(true)}
                 onOpenEditModal={(a) => setEditModalAsset(a)}
                 onOpenIssueModal={(a) => setIssueModalAsset(a)}
                 onOpenReturnModal={(a) => setReturnModalAsset(a)}
                 onDeleteAsset={handleDeleteAsset}
+                onBatchDeleteAssets={handleBatchDeleteAssets}
                 onRefreshData={loadData}
                 canManage={canManage}
               />
@@ -373,6 +398,8 @@ export default function App() {
                 canManage={canManage}
                 onRefreshData={loadData}
                 onSelectCategory={(catId) => {
+                  setInventoryCategoryFilter(catId);
+                  setInventoryLocationFilter('all');
                   setCurrentTab('inventory');
                 }}
               />
@@ -385,6 +412,8 @@ export default function App() {
                 canManage={canManage}
                 onRefreshData={loadData}
                 onSelectLocation={(locStr) => {
+                  setInventoryLocationFilter(locStr);
+                  setInventoryCategoryFilter('all');
                   setCurrentTab('inventory');
                 }}
               />
