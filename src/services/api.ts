@@ -1293,6 +1293,12 @@ export const api = {
   },
 
   async updateBuildingInfo(oldCity: string, oldBuilding: string, newCity: string, newBuilding: string): Promise<{ success: boolean; message: string }> {
+    const data = await safeFetch<any>('/buildings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldCity, oldBuilding, newCity, newBuilding })
+    });
+
     const store = getLocalStore();
     let updatedCount = 0;
 
@@ -1313,6 +1319,7 @@ export const api = {
     });
 
     saveLocalStore(store);
+    if (data && data.success) return data;
     return { success: true, message: `Building details updated across ${updatedCount} room records` };
   },
 
@@ -1332,6 +1339,12 @@ export const api = {
       }
     }
 
+    const data = await safeFetch<any>('/buildings/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city, buildingName })
+    });
+
     // Delete all room location records under this building
     const deletedCount = roomsInBuilding.length;
     store.locations = store.locations.filter((l: any) => {
@@ -1343,6 +1356,7 @@ export const api = {
     });
 
     saveLocalStore(store);
+    if (data && data.success) return data;
     return { success: true, message: `Building "${buildingName}" in ${city} (${deletedCount} rooms) deleted successfully.` };
   },
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Save, AlertCircle, PlusCircle, Edit, Sparkles } from 'lucide-react';
 import { Asset, AssetCondition, AssetStatus, Category, LocationRecord, RecordCompletion } from '../types/inventory.js';
 import { api } from '../services/api.js';
@@ -45,6 +45,15 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const availableBranches = useMemo(() => {
+    const list = Array.from(new Set(locations.map(l => l.officeBranch?.trim()).filter(Boolean)));
+    return list.length > 0 ? list : ['Bela', 'Head Office - Islamabad', 'Field Office - Quetta'];
+  }, [locations]);
+
+  const branchRooms = useMemo(() => {
+    return locations.filter(l => !officeBranch || l.officeBranch?.toLowerCase() === officeBranch.toLowerCase());
+  }, [locations, officeBranch]);
+
   useEffect(() => {
     if (assetToEdit) {
       setAssetId(assetToEdit.assetId);
@@ -75,9 +84,10 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setSerialNumber('');
       setPurchaseDate(new Date().toISOString().split('T')[0]);
       setPurchaseCost('0');
-      setSupplier('');
-      setOfficeBranch('Head Office - Islamabad');
-      setBuildingRoom('Central Store - Bay A');
+      const defaultBranch = availableBranches[0] || 'Bela';
+      const defaultRoom = locations.find(l => l.officeBranch === defaultBranch);
+      setOfficeBranch(defaultBranch);
+      setBuildingRoom(defaultRoom ? `${defaultRoom.building} - ${defaultRoom.room}` : 'Central Store - Bay A');
       setCondition('Good');
       setStatus('Available');
       setWarrantyExpiry('');
@@ -311,14 +321,22 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
           {/* Location & Room */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1">Office Branch *</label>
+              <label className="block text-xs font-bold text-slate-800 mb-1">City / Office Branch *</label>
               <select
                 value={officeBranch}
-                onChange={(e) => setOfficeBranch(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                onChange={(e) => {
+                  const newBranch = e.target.value;
+                  setOfficeBranch(newBranch);
+                  const matchingLoc = locations.find(l => l.officeBranch?.toLowerCase() === newBranch.toLowerCase());
+                  if (matchingLoc) {
+                    setBuildingRoom(`${matchingLoc.building} - ${matchingLoc.room}`);
+                  }
+                }}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
               >
-                <option value="Head Office - Islamabad">Head Office - Islamabad</option>
-                <option value="Field Office - Quetta">Field Office - Quetta</option>
+                {availableBranches.map((branch) => (
+                  <option key={branch} value={branch}>{branch}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -326,11 +344,17 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
               <input
                 type="text"
                 required
+                list="registered-rooms-list"
                 value={buildingRoom}
                 onChange={(e) => setBuildingRoom(e.target.value)}
-                placeholder="e.g. Central Store - Bay A"
+                placeholder="e.g. Head Office Building - Room 1: WANG Office"
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
               />
+              <datalist id="registered-rooms-list">
+                {branchRooms.map((l) => (
+                  <option key={l.locationId} value={`${l.building} - ${l.room}`} />
+                ))}
+              </datalist>
             </div>
           </div>
 

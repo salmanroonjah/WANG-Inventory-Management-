@@ -1849,6 +1849,73 @@ class Database {
     return { success: true, message: `Location ${loc.room} deleted successfully.` };
   }
 
+  public updateBuilding(oldCity: string, oldBuilding: string, newCity: string, newBuilding: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    let count = 0;
+    this.data.locations.forEach(l => {
+      if (l.officeBranch?.toLowerCase() === oldCity.toLowerCase() && l.building?.toLowerCase() === oldBuilding.toLowerCase()) {
+        l.officeBranch = newCity.trim();
+        l.building = newBuilding.trim();
+        count++;
+      }
+    });
+
+    this.data.assets.forEach(a => {
+      if (a.officeBranch?.toLowerCase() === oldCity.toLowerCase()) {
+        a.officeBranch = newCity.trim();
+      }
+    });
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'UPDATE_LOCATION',
+      recordType: 'Location',
+      recordId: `${newCity}-${newBuilding}`,
+      details: `Updated building: ${oldCity} / ${oldBuilding} -> ${newCity} / ${newBuilding}`
+    });
+
+    this.saveData();
+    return { success: true, message: `Building details updated across ${count} rooms.` };
+  }
+
+  public deleteBuilding(city: string, buildingName: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const roomsInBuilding = this.data.locations.filter(
+      l => l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase()
+    );
+
+    for (const roomLoc of roomsInBuilding) {
+      const linkedAssets = this.data.assets.filter(
+        a => a.officeBranch?.toLowerCase() === city.toLowerCase() && a.buildingRoom?.toLowerCase().includes(roomLoc.room.toLowerCase())
+      );
+      if (linkedAssets.length > 0) {
+        return {
+          success: false,
+          message: `Cannot delete building "${buildingName}": Room "${roomLoc.room}" has ${linkedAssets.length} active asset(s). Reassign them first.`
+        };
+      }
+    }
+
+    const beforeCount = this.data.locations.length;
+    this.data.locations = this.data.locations.filter(
+      l => !(l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase())
+    );
+    const removedCount = beforeCount - this.data.locations.length;
+
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_LOCATION',
+      recordType: 'Location',
+      recordId: `${city}-${buildingName}`,
+      details: `Deleted building: ${buildingName} in ${city} (${removedCount} rooms removed)`
+    });
+
+    this.saveData();
+    return { success: true, message: `Building "${buildingName}" in ${city} and its ${removedCount} room(s) deleted successfully.` };
+  }
+
   // --- Consumables Transactions ---
   public adjustConsumableStock(params: {
     itemCode: string;

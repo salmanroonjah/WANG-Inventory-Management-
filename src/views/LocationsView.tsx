@@ -257,6 +257,9 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
 
   const handleFormSuccess = () => {
     setSuccessMsg('Saved successfully.');
+    if (buildingToEdit) {
+      setSelectedBuildingGroupKey(null);
+    }
     if (onRefreshData) onRefreshData();
     setTimeout(() => setSuccessMsg(null), 4000);
   };
@@ -872,6 +875,25 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
               Are you sure you want to delete room <strong className="text-slate-900">{deletingLocation.room}</strong> at <strong className="text-slate-900">{deletingLocation.building} ({deletingLocation.officeBranch})</strong>?
             </p>
 
+            {(() => {
+              const count = allAssets.filter(a => 
+                a.officeBranch?.toLowerCase() === deletingLocation.officeBranch?.toLowerCase() &&
+                (a.buildingRoom?.toLowerCase().includes(deletingLocation.room?.toLowerCase()) || deletingLocation.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
+              ).length;
+              if (count > 0) {
+                return (
+                  <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">Active Assets Present ({count}): </span>
+                      This room currently holds {count} active asset(s). Reassign them first before deleting.
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {deleteError && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
@@ -891,8 +913,11 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
               <button
                 type="button"
                 onClick={handleDeleteConfirm}
-                disabled={isDeleting}
-                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                disabled={isDeleting || allAssets.some(a => 
+                  a.officeBranch?.toLowerCase() === deletingLocation.officeBranch?.toLowerCase() &&
+                  (a.buildingRoom?.toLowerCase().includes(deletingLocation.room?.toLowerCase()) || deletingLocation.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
+                )}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 {isDeleting ? (
                   <>
@@ -932,6 +957,16 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
               <div>• <strong>Total assets in building:</strong> {deletingBuildingGroup.totalAssetCount} assets</div>
             </div>
 
+            {deletingBuildingGroup.totalAssetCount > 0 && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Active Assets in Building ({deletingBuildingGroup.totalAssetCount}): </span>
+                  This building holds active assets across its rooms. Please reassign or transfer those assets before deleting this building.
+                </div>
+              </div>
+            )}
+
             {deleteError && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
@@ -951,8 +986,8 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
               <button
                 type="button"
                 onClick={handleDeleteBuildingConfirm}
-                disabled={isDeleting}
-                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                disabled={isDeleting || deletingBuildingGroup.totalAssetCount > 0}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 {isDeleting ? (
                   <>

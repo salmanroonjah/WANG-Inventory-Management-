@@ -441,6 +441,38 @@ app.delete('/api/locations/:id', (req: Request, res: Response) => {
   res.json(result);
 });
 
+app.put('/api/buildings', (req: Request, res: Response) => {
+  if (activeSession.role === 'Employee') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Staff members cannot modify building records.' });
+  }
+  const { oldCity, oldBuilding, newCity, newBuilding } = req.body;
+  if (!oldCity || !oldBuilding || !newCity || !newBuilding) {
+    return res.status(400).json({ success: false, message: 'Missing required building update fields.' });
+  }
+  const result = db.updateBuilding(oldCity, oldBuilding, newCity, newBuilding, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.post('/api/buildings/delete', (req: Request, res: Response) => {
+  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory & Finance Admin' && (activeSession.role as any) !== 'Inventory Manager') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only Administrative roles can delete buildings.' });
+  }
+  const { city, buildingName } = req.body;
+  if (!city || !buildingName) {
+    return res.status(400).json({ success: false, message: 'City and Building Name are required.' });
+  }
+  const result = db.deleteBuilding(city, buildingName, {
+    userId: activeSession.userId,
+    name: activeSession.name
+  });
+  if (!result.success) return res.status(400).json(result);
+  res.json(result);
+});
+
 // --- CONSUMABLES ---
 app.get('/api/consumables', (_req: Request, res: Response) => {
   res.json({ success: true, consumables: db.getConsumables() });
