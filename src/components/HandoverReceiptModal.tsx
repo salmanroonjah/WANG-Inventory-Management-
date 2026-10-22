@@ -57,17 +57,26 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
         {/* Printable Voucher Paper */}
         <div className="p-8 overflow-y-auto flex-1 bg-white font-sans text-slate-800" ref={printAreaRef}>
           {/* Organization Letterhead */}
-          <div className="border-b-2 border-slate-900 pb-4 mb-6 flex items-start justify-between">
-            <div>
-              <span className="text-xs uppercase tracking-widest font-bold text-slate-500">
-                Welfare Association for New Generation
-              </span>
-              <h1 className="text-2xl font-black text-slate-950 tracking-tight">
-                WANG INVENTORY SYSTEM
-              </h1>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Head Office: Islamabad, Pakistan · Field Hub: Quetta, Balochistan
-              </p>
+          <div className="border-b-2 border-slate-900 pb-4 mb-6 flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="h-14 px-3.5 py-1.5 bg-[#003279] rounded-xl flex items-center justify-center shrink-0 shadow-xs">
+                <img 
+                  src="/assets/aistudio/wang_logo.png" 
+                  alt="WANG Logo" 
+                  className="h-10 w-auto object-contain"
+                />
+              </div>
+              <div>
+                <span className="text-xs uppercase tracking-widest font-bold text-slate-500 block">
+                  Welfare Association for New Generation
+                </span>
+                <h1 className="text-2xl font-black text-slate-950 tracking-tight">
+                  WANG INVENTORY SYSTEM
+                </h1>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Head Office: Islamabad, Pakistan · Field Hub: Quetta, Balochistan
+                </p>
+              </div>
             </div>
             <div className="text-right">
               <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 border border-slate-300 rounded text-slate-900 font-mono">

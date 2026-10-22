@@ -67,33 +67,38 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-[#003279] text-white border-b border-[#002254] shadow-md">
-      <div className="px-4 sm:px-6 h-14 flex items-center justify-between">
+      <div className="px-2.5 sm:px-6 h-14 flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Left: Mobile hamburger & Brand */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
           <button
             onClick={onToggleMobileMenu}
-            className="md:hidden p-1.5 text-white/80 hover:text-white rounded-md hover:bg-white/10 transition-colors"
+            className="md:hidden p-1 text-white/80 hover:text-white rounded-md hover:bg-white/10 transition-colors shrink-0"
             aria-label="Toggle Navigation"
           >
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded bg-[#f1cc11] text-[#003279] flex items-center justify-center font-black text-xs tracking-wider shadow-sm">
-              WANG
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm tracking-tight text-white">
-                  WANG Inventory
-                </span>
-                <span className="hidden sm:inline-block text-[10px] text-[#003279] font-bold uppercase bg-[#f1cc11] px-1.5 py-0.5 rounded shadow-xs">
-                  Official
-                </span>
-              </div>
-              <p className="hidden md:block text-[10px] text-white/80 leading-none">
+          <div className="flex items-center gap-2 md:gap-3.5 min-w-0">
+            {/* Desktop only: Logo with 'Welfare Association for New Generation' underneath */}
+            <div className="hidden md:flex flex-col items-start justify-center shrink-0">
+              <img 
+                src="/assets/aistudio/wang_logo.png" 
+                alt="WANG Logo" 
+                className="h-7 md:h-8 w-auto object-contain shrink-0 drop-shadow-sm transition-transform hover:scale-105"
+              />
+              <span className="text-[9px] md:text-[10px] text-white/80 font-medium tracking-tight leading-none mt-0.5">
                 Welfare Association for New Generation
-              </p>
+              </span>
+            </div>
+
+            {/* Clean subtle divider for desktop */}
+            <span className="hidden md:inline-block h-6 w-px bg-white/20"></span>
+
+            {/* Mobile: Just 'Inventory Management System' (compact & fully visible) */}
+            <div className="flex items-center min-w-0">
+              <span className="font-bold text-[10px] xs:text-[11px] sm:text-xs md:text-sm tracking-tight text-white whitespace-nowrap">
+                Inventory Management System
+              </span>
             </div>
           </div>
         </div>

@@ -33,16 +33,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-[#003279] via-[#002863] to-[#001a40] text-white rounded-2xl p-6 sm:p-8 shadow-md relative overflow-hidden border-b-4 border-[#f1cc11]">
         <div className="relative z-10 max-w-2xl">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#f1cc11] font-mono">
-              Official Inventory Control System
-            </span>
-            <span className="text-white/40">·</span>
-            <span className="text-xs text-white/80">Welfare Association for New Generation</span>
+          <div className="flex items-center gap-3 mb-3">
+            <img 
+              src="/assets/aistudio/wang_logo.png" 
+              alt="WANG Logo" 
+              className="h-14 sm:h-16 w-auto object-contain shrink-0 drop-shadow-xl transition-transform hover:scale-105"
+            />
+            <div>
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-white leading-tight">
+                WANG Asset & Stock Management
+              </h1>
+            </div>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            WANG Asset & Stock Management
-          </h1>
           <p className="text-xs sm:text-sm text-white/85 mt-2 leading-relaxed">
             Barcode-managed asset tracking, issue and return ledger, master registry, and safe data synchronization.
           </p>

@@ -137,7 +137,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div className="flex flex-col h-full bg-[#001e48] text-slate-200">
       {/* Mobile Header */}
       <div className="p-4 border-b border-[#002e6b] flex md:hidden items-center justify-between">
-        <span className="font-bold text-white text-sm">WANG Navigation</span>
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-white text-sm tracking-tight">Inventory Management System</span>
+        </div>
         <button
           onClick={onCloseMobile}
           className="p-1 text-white/70 hover:text-white rounded"
