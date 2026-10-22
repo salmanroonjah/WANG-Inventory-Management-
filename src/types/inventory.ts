@@ -74,7 +74,7 @@ export interface Asset {
   quantity: number; // 1 for individual fixed assets
   unit: string; // Unit, Set, Piece
   purchaseDate: string; // YYYY-MM-DD
-  purchaseCost: number; // in USD or PKR
+  purchaseCost: number; // in PKR (Pakistani Rupee)
   supplier: string;
   officeBranch: string; // Head Office, Field Office - Quetta
   buildingRoom: string; // Room 204 - IT Lab

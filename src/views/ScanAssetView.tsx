@@ -331,7 +331,7 @@ export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
                 </div>
                 <div>
                   <span className="text-slate-400 text-[11px] block">Purchase Cost:</span>
-                  <span className="font-mono font-medium text-slate-900">${searchedAsset.purchaseCost}</span>
+                  <span className="font-mono font-medium text-slate-900">PKR {searchedAsset.purchaseCost?.toLocaleString() ?? 0}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 text-[11px] block">Purchase Date:</span>

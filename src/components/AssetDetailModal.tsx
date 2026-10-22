@@ -214,7 +214,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-slate-500 block">Purchase Cost:</span>
-                <span className="text-slate-900 font-mono">${asset.purchaseCost}</span>
+                <span className="text-slate-900 font-mono font-bold">PKR {asset.purchaseCost?.toLocaleString() ?? 0}</span>
               </div>
               <div>
                 <span className="text-slate-500 block">Supplier:</span>

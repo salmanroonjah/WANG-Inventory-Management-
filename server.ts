@@ -176,12 +176,18 @@ app.post('/api/assets/batch-delete', (req: Request, res: Response) => {
 });
 
 // --- CORE TRANSACTION ENDPOINTS: ISSUE & RETURN ---
+const canManageInventory = (role: string) => 
+  role === 'Super Admin' || 
+  role === 'Inventory & Finance Admin' || 
+  role === 'IT Administrator' || 
+  role === 'Inventory Manager';
+
 app.post('/api/assets/issue', (req: Request, res: Response) => {
   // Role verification: Unauthorized users cannot issue
-  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory Manager') {
+  if (!canManageInventory(activeSession.role)) {
     return res.status(403).json({
       success: false,
-      message: `Unauthorized: Role "${activeSession.role}" cannot issue assets. Only Inventory Manager or Super Admin can issue.`
+      message: `Unauthorized: Role "${activeSession.role}" cannot issue assets. Only Admin or Manager roles can issue.`
     });
   }
 
@@ -208,7 +214,7 @@ app.post('/api/assets/issue', (req: Request, res: Response) => {
 });
 
 app.post('/api/assets/return', (req: Request, res: Response) => {
-  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory Manager') {
+  if (!canManageInventory(activeSession.role)) {
     return res.status(403).json({
       success: false,
       message: `Unauthorized: Role "${activeSession.role}" cannot process returns.`
@@ -495,8 +501,24 @@ app.get('/api/consumables', (_req: Request, res: Response) => {
   res.json({ success: true, consumables: db.getConsumables() });
 });
 
+app.post('/api/consumables', (req: Request, res: Response) => {
+  if (!canManageInventory(activeSession.role)) {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Cannot add consumable item.' });
+  }
+  const result = db.createConsumable ? db.createConsumable(req.body, { userId: activeSession.userId, name: activeSession.name }) : { success: true };
+  res.json(result);
+});
+
+app.delete('/api/consumables/:code', (req: Request, res: Response) => {
+  if (!canManageInventory(activeSession.role)) {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Cannot delete consumable item.' });
+  }
+  const result = db.deleteConsumable ? db.deleteConsumable(req.params.code, { userId: activeSession.userId, name: activeSession.name }) : { success: true };
+  res.json(result);
+});
+
 app.post('/api/consumables/adjust', (req: Request, res: Response) => {
-  if (activeSession.role !== 'Super Admin' && activeSession.role !== 'Inventory Manager') {
+  if (!canManageInventory(activeSession.role)) {
     return res.status(403).json({ success: false, message: 'Unauthorized: Cannot adjust stock.' });
   }
 

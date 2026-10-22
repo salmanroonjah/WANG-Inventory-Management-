@@ -149,7 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Nav List */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 overscroll-contain touch-pan-y scrollbar-thin scrollbar-thumb-white/10">
         {sections.map((sectionName) => (
           <div key={sectionName}>
             <span className="px-3 text-[10px] font-bold uppercase tracking-wider text-[#f1cc11]/90 block mb-1.5">
@@ -165,7 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       key={item.id}
                       onClick={() => handleItemClick(item.id)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs transition-all cursor-pointer ${
                         isActive
                           ? 'bg-[#003279] text-white font-bold border-l-4 border-[#f1cc11] shadow-sm'
                           : 'text-slate-300 hover:bg-white/10 hover:text-white font-medium'
@@ -176,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span>{item.label}</span>
                       </div>
                       {item.badge && item.badge > 0 ? (
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${item.badgeColor || 'bg-white/20 text-white'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${item.badgeColor || 'bg-white/20 text-white'}`}>
                           {item.badge}
                         </span>
                       ) : null}
@@ -189,7 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer Info */}
-      <div className="p-3 border-t border-[#002e6b] bg-[#001738] text-[11px] text-slate-300">
+      <div className="p-3 border-t border-[#002e6b] bg-[#001738] text-[11px] text-slate-300 shrink-0">
         <div className="flex items-center justify-between">
           <span className="text-white/70">Role:</span>
           <span className="font-bold text-[#f1cc11]">{userRole}</span>
@@ -204,15 +204,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* Desktop Persistent Sidebar */}
-      <aside className="hidden md:block w-64 shrink-0 border-r border-[#002e6b] h-[calc(100vh-3.5rem)] sticky top-14">
+      <aside className="hidden md:block w-64 shrink-0 border-r border-[#002e6b] h-[calc(100vh-3.5rem)] sticky top-14 z-20">
         {sidebarContent}
       </aside>
 
       {/* Mobile Drawer */}
       {isOpenMobile && (
-        <div className="fixed inset-0 z-40 md:hidden flex">
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs" onClick={onCloseMobile} />
-          <div className="relative w-72 max-w-[80vw] h-full z-50 shadow-2xl">
+        <div className="fixed inset-0 z-50 md:hidden flex animate-in fade-in duration-200">
+          <div 
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs transition-opacity" 
+            onClick={onCloseMobile} 
+          />
+          <div className="relative w-72 max-w-[85vw] h-full z-50 shadow-2xl flex flex-col animate-in slide-in-from-left duration-200">
             {sidebarContent}
           </div>
         </div>

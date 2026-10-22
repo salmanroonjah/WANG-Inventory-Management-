@@ -2022,6 +2022,71 @@ class Database {
     return { success: true, message: `Stock updated for ${item.itemName}. New balance: ${newStock} ${item.unit}(s).`, item };
   }
 
+  public createConsumable(payload: Partial<ConsumableItem>, performedBy: { userId: string; name: string }): { success: boolean; message: string; item?: ConsumableItem } {
+    let code = payload.itemCode?.trim().toUpperCase();
+    if (!code) {
+      const highestNum = this.data.consumables.reduce((max, c) => {
+        const match = c.itemCode?.match(/\d+/);
+        return match ? Math.max(max, parseInt(match[0], 10)) : max;
+      }, 0);
+      code = `CON-${String(highestNum + 1).padStart(3, '0')}`;
+    }
+
+    if (this.data.consumables.some(c => c.itemCode.toUpperCase() === code)) {
+      return { success: false, message: `Consumable item code "${code}" already exists.` };
+    }
+
+    const newItem: ConsumableItem = {
+      itemCode: code,
+      itemName: payload.itemName?.trim() || 'New Supply Item',
+      category: payload.category?.trim() || 'Office Supplies',
+      unit: payload.unit?.trim() || 'Unit',
+      openingBalance: Number(payload.openingBalance) || Number(payload.currentStock) || 0,
+      currentStock: Number(payload.currentStock) || 0,
+      minimumThreshold: Number(payload.minimumThreshold) || 5,
+      unitCost: Number(payload.unitCost) || 0,
+      location: payload.location?.trim() || 'Central Store - Shelf 1',
+      supplier: payload.supplier?.trim() || '',
+      lastUpdated: new Date().toISOString()
+    };
+
+    this.data.consumables.push(newItem);
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'CREATE_CONSUMABLE',
+      recordType: 'Consumable',
+      recordId: code,
+      details: `Added new consumable item: ${newItem.itemName} (${code}) with stock: ${newItem.currentStock} ${newItem.unit}s.`
+    });
+
+    this.saveData();
+    return { success: true, message: `Consumable ${newItem.itemName} added successfully.`, item: newItem };
+  }
+
+  public deleteConsumable(itemCode: string, performedBy: { userId: string; name: string }): { success: boolean; message: string } {
+    const cleanCode = itemCode.trim().toUpperCase();
+    const idx = this.data.consumables.findIndex(c => c.itemCode.toUpperCase() === cleanCode);
+    if (idx === -1) {
+      return { success: false, message: `Consumable ${cleanCode} not found.` };
+    }
+
+    const removed = this.data.consumables.splice(idx, 1)[0];
+    this.logActivity({
+      userId: performedBy.userId,
+      userName: performedBy.name,
+      userRole: 'Super Admin',
+      action: 'DELETE_CONSUMABLE',
+      recordType: 'Consumable',
+      recordId: cleanCode,
+      details: `Deleted consumable item: ${removed?.itemName || cleanCode} (${cleanCode}).`
+    });
+
+    this.saveData();
+    return { success: true, message: `Consumable ${cleanCode} deleted successfully.` };
+  }
+
   // --- Requests Management ---
   public createRequest(request: Partial<AssetRequest>): { success: boolean; message: string; request?: AssetRequest } {
     const now = new Date().toISOString();

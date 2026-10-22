@@ -193,6 +193,15 @@ export async function saveConsumableToFirestore(item: ConsumableItem): Promise<v
   } catch (err) {}
 }
 
+export async function deleteConsumableFromFirestore(itemCode: string): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    await deleteDoc(doc(db, 'consumables', itemCode));
+  } catch (err) {
+    console.warn('[Firestore] Failed to delete consumable', err);
+  }
+}
+
 // --- CATEGORIES & LOCATIONS ---
 export async function fetchCategoriesFromFirestore(): Promise<Category[] | null> {
   try {

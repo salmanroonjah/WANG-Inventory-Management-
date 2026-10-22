@@ -260,7 +260,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     const headers = [
       'Asset ID', 'Item Name', 'Category', 'Brand', 'Model', 'Serial Number',
       'Location / Branch', 'Building Room', 'Status', 'Condition', 'Assigned To', 'Assigned ID',
-      'Cost (PKR/USD)', 'Purchase Date', 'Supplier', 'Warranty Expiry', 'Completion'
+      'Cost (PKR)', 'Purchase Date', 'Supplier', 'Warranty Expiry', 'Completion'
     ];
 
     const rows = listToExport.map(a => [

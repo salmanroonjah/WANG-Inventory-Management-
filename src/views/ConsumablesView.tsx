@@ -8,7 +8,11 @@ import {
   RotateCcw, 
   Building, 
   CheckCircle2,
-  X
+  X,
+  Plus,
+  Trash2,
+  Tag,
+  MapPin
 } from 'lucide-react';
 import { ConsumableItem, Employee } from '../types/inventory.js';
 import { api } from '../services/api.js';
@@ -27,6 +31,8 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
   canManage
 }) => {
   const [search, setSearch] = useState('');
+  
+  // Stock Adjustment State
   const [adjustItem, setAdjustItem] = useState<ConsumableItem | null>(null);
   const [deltaQty, setDeltaQty] = useState<number>(1);
   const [adjustType, setAdjustType] = useState<'RECEIVE' | 'ISSUE'>('ISSUE');
@@ -36,11 +42,97 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // New Consumable Modal State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newItemCode, setNewItemCode] = useState('');
+  const [newItemName, setNewItemName] = useState('');
+  const [newCategory, setNewCategory] = useState('Stationery & Printing');
+  const [newUnit, setNewUnit] = useState('Ream');
+  const [newStock, setNewStock] = useState('10');
+  const [newThreshold, setNewThreshold] = useState('3');
+  const [newUnitCost, setNewUnitCost] = useState('500');
+  const [newLocation, setNewLocation] = useState('Central Store - Shelf 1');
+  const [newSupplier, setNewSupplier] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Delete State
+  const [itemToDelete, setItemToDelete] = useState<ConsumableItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const filtered = consumables.filter(c =>
     c.itemCode.toLowerCase().includes(search.toLowerCase()) ||
     c.itemName.toLowerCase().includes(search.toLowerCase()) ||
     c.category.toLowerCase().includes(search.toLowerCase())
   );
+
+  const handleOpenCreateModal = () => {
+    const highestNum = consumables.reduce((max, c) => {
+      const match = c.itemCode?.match(/\d+/);
+      return match ? Math.max(max, parseInt(match[0], 10)) : max;
+    }, 0);
+    setNewItemCode(`CON-${String(highestNum + 1).padStart(3, '0')}`);
+    setNewItemName('');
+    setNewCategory('Stationery & Printing');
+    setNewUnit('Piece');
+    setNewStock('10');
+    setNewThreshold('3');
+    setNewUnitCost('500');
+    setNewLocation('Central Store - Shelf 1');
+    setNewSupplier('');
+    setCreateError(null);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newItemName.trim()) {
+      setCreateError('Item description/name is required.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setCreateError(null);
+
+    try {
+      await api.createConsumable({
+        itemCode: newItemCode.trim().toUpperCase(),
+        itemName: newItemName.trim(),
+        category: newCategory.trim(),
+        unit: newUnit.trim(),
+        currentStock: parseInt(newStock, 10) || 0,
+        openingBalance: parseInt(newStock, 10) || 0,
+        minimumThreshold: parseInt(newThreshold, 10) || 1,
+        unitCost: parseFloat(newUnitCost) || 0,
+        location: newLocation.trim(),
+        supplier: newSupplier.trim()
+      });
+
+      setSuccessMsg(`Consumable item "${newItemName}" added successfully.`);
+      setIsCreateModalOpen(false);
+      onRefresh();
+      setTimeout(() => setSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setCreateError(err?.message || 'Failed to create consumable item.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!itemToDelete) return;
+    setIsDeleting(true);
+    try {
+      await api.deleteConsumable(itemToDelete.itemCode);
+      setSuccessMsg(`Consumable item "${itemToDelete.itemName}" (${itemToDelete.itemCode}) removed.`);
+      setItemToDelete(null);
+      onRefresh();
+      setTimeout(() => setSuccessMsg(null), 3500);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete consumable item.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleAdjustSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,21 +175,36 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
-            <PackageCheck className="w-5 h-5 text-emerald-700" />
+            <PackageCheck className="w-5 h-5 text-[#003279]" />
             <h1 className="text-xl font-bold text-slate-900 tracking-tight">
               Consumable Stock & Supplies Ledger
             </h1>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Quantity-tracked bulk inventory (paper, toner, pens, batteries) managed separately from individual fixed assets.
+            Quantity-tracked supplies (stationery, toners, batteries, pantry items) with manual item creation, restock, and issuance.
           </p>
         </div>
+
+        {canManage && (
+          <button
+            onClick={handleOpenCreateModal}
+            className="px-4 py-2 bg-[#003279] hover:bg-[#002254] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4 text-[#f1cc11]" />
+            <span>Add Consumable Item</span>
+          </button>
+        )}
       </div>
 
       {successMsg && (
-        <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-900 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          <span>{successMsg}</span>
+        <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-900 text-xs flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+          <button onClick={() => setSuccessMsg(null)} className="text-emerald-700 hover:text-emerald-900">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -109,8 +216,8 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search consumable items by code or name..."
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-slate-900"
+            placeholder="Search consumable items by code, name, or category..."
+            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279]"
           />
         </div>
       </div>
@@ -119,90 +226,303 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100 text-slate-700 uppercase tracking-wider text-[10px] font-semibold border-b border-slate-200">
+            <thead className="bg-[#003279] text-white uppercase tracking-wider text-[10px] font-semibold border-b border-[#002254]">
               <tr>
                 <th className="py-3 px-4">Item Code</th>
                 <th className="py-3 px-4">Item Description</th>
                 <th className="py-3 px-4">Category</th>
                 <th className="py-3 px-4">Current Stock</th>
                 <th className="py-3 px-4">Min. Threshold</th>
-                <th className="py-3 px-4">Unit Cost</th>
+                <th className="py-3 px-4">Unit Cost (PKR)</th>
                 <th className="py-3 px-4">Location</th>
-                <th className="py-3 px-4 text-right">Stock Action</th>
+                <th className="py-3 px-4 text-right">Stock & Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filtered.map((item) => {
-                const isLowStock = item.currentStock <= item.minimumThreshold;
-                return (
-                  <tr key={item.itemCode} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                      {item.itemCode}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="font-bold text-slate-900 block">{item.itemName}</span>
-                      <span className="text-[11px] text-slate-500">Unit: {item.unit}</span>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-700">
-                      {item.category}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className={`font-mono font-bold text-sm ${isLowStock ? 'text-amber-700' : 'text-slate-900'}`}>
-                          {item.currentStock} {item.unit}(s)
-                        </span>
-                        {isLowStock && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                            Low
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <PackageCheck className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    <p className="font-semibold text-slate-600">No consumable items found</p>
+                    <p className="text-[11px] mt-0.5">Click "Add Consumable Item" to add new inventory records.</p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => {
+                  const isLowStock = item.currentStock <= item.minimumThreshold;
+                  return (
+                    <tr key={item.itemCode} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3.5 px-4 font-mono font-bold text-[#003279]">
+                        {item.itemCode}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="font-bold text-slate-900 block">{item.itemName}</span>
+                        <span className="text-[11px] text-slate-500">Unit: {item.unit}</span>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-700">
+                        {item.category}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono font-bold text-sm ${isLowStock ? 'text-amber-700' : 'text-slate-900'}`}>
+                            {item.currentStock} {item.unit}(s)
                           </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-600">
-                      {item.minimumThreshold} {item.unit}(s)
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-700">
-                      ${item.unitCost.toFixed(2)}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600">
-                      {item.location}
-                    </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      {canManage && (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => {
-                              setAdjustItem(item);
-                              setAdjustType('ISSUE');
-                              setError(null);
-                            }}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-semibold rounded border border-slate-300 flex items-center gap-1"
-                          >
-                            <MinusCircle className="w-3 h-3 text-rose-600" />
-                            Issue
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setAdjustItem(item);
-                              setAdjustType('RECEIVE');
-                              setError(null);
-                            }}
-                            className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-semibold rounded border border-emerald-300 flex items-center gap-1"
-                          >
-                            <PlusCircle className="w-3 h-3 text-emerald-700" />
-                            Restock
-                          </button>
+                          {isLowStock && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                              Low
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-600">
+                        {item.minimumThreshold} {item.unit}(s)
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-semibold text-slate-800">
+                        PKR {Number(item.unitCost || 0).toLocaleString()}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600">
+                        {item.location}
+                      </td>
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {canManage && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setAdjustItem(item);
+                                  setAdjustType('ISSUE');
+                                  setError(null);
+                                }}
+                                title="Issue Stock to Staff"
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-semibold rounded border border-slate-300 flex items-center gap-1 cursor-pointer"
+                              >
+                                <MinusCircle className="w-3 h-3 text-rose-600" />
+                                <span>Issue</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setAdjustItem(item);
+                                  setAdjustType('RECEIVE');
+                                  setError(null);
+                                }}
+                                title="Restock New Supplies"
+                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-semibold rounded border border-emerald-300 flex items-center gap-1 cursor-pointer"
+                              >
+                                <PlusCircle className="w-3 h-3 text-emerald-700" />
+                                <span>Restock</span>
+                              </button>
+
+                              <button
+                                onClick={() => setItemToDelete(item)}
+                                title="Delete Consumable Item"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Add Consumable Item Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
+          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center justify-between border-b border-[#002254] px-6 py-4 bg-[#003279] text-white">
+              <div className="flex items-center gap-2">
+                <PackageCheck className="w-5 h-5 text-[#f1cc11]" />
+                <h3 className="font-bold text-white text-base">Register New Consumable Item</h3>
+              </div>
+              <button onClick={() => setIsCreateModalOpen(false)} className="text-white/70 hover:text-white p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSubmit} className="p-6 space-y-4 text-xs overflow-y-auto max-h-[80vh]">
+              {createError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs">
+                  {createError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Item Code *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newItemCode}
+                    onChange={(e) => setNewItemCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. CON-005"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono font-bold text-[#003279] focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Category *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    placeholder="e.g. Stationery, Printer Supplies"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">Item Description / Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={newItemName}
+                  onChange={(e) => setNewItemName(e.target.value)}
+                  placeholder="e.g. Double A A4 Copier Paper 80gsm"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Unit Type *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newUnit}
+                    onChange={(e) => setNewUnit(e.target.value)}
+                    placeholder="Ream, Box, Piece"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Initial Stock *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={newStock}
+                    onChange={(e) => setNewStock(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Min. Alert Threshold</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={newThreshold}
+                    onChange={(e) => setNewThreshold(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Unit Cost (PKR) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    required
+                    value={newUnitCost}
+                    onChange={(e) => setNewUnitCost(e.target.value)}
+                    placeholder="Cost in PKR"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1">Storage Location</label>
+                  <input
+                    type="text"
+                    value={newLocation}
+                    onChange={(e) => setNewLocation(e.target.value)}
+                    placeholder="e.g. Central Store - Shelf 1"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">Supplier / Vendor (Optional)</label>
+                <input
+                  type="text"
+                  value={newSupplier}
+                  onChange={(e) => setNewSupplier(e.target.value)}
+                  placeholder="e.g. OfficeDepot Pakistan"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:text-slate-900 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2.5 bg-[#003279] hover:bg-[#002254] text-white font-bold rounded-xl shadow-xs"
+                >
+                  {isSubmitting ? 'Registering...' : 'Save Consumable Item'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden p-5">
+            <div className="flex items-center gap-3 text-rose-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">Delete Consumable Item?</h4>
+                <span className="text-[11px] text-slate-500 font-mono">{itemToDelete.itemCode}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-5">
+              Are you sure you want to permanently delete <strong>{itemToDelete.itemName}</strong>? This will remove it from cloud and local ledger.
+            </p>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                className="px-3.5 py-1.5 text-slate-600 hover:text-slate-900 font-semibold text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteConfirm}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs"
+              >
+                {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Adjust Stock Modal */}
       {adjustItem && (
@@ -241,11 +561,11 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                 <input
                   type="number"
                   min="1"
-                  max={adjustType === 'ISSUE' ? adjustItem.currentStock : 9999}
+                  max={adjustType === 'ISSUE' ? adjustItem.currentStock : 99999}
                   required
                   value={deltaQty}
                   onChange={(e) => setDeltaQty(parseInt(e.target.value, 10) || 1)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-[#003279]"
                 />
               </div>
 
@@ -257,7 +577,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                   <select
                     value={selectedEmpId}
                     onChange={(e) => setSelectedEmpId(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#003279]"
                   >
                     <option value="">-- Select Employee (Optional) --</option>
                     {employees.map(e => (
@@ -277,7 +597,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder={adjustType === 'RECEIVE' ? 'e.g. Shipment delivered from OfficeDepot' : 'e.g. A4 paper for Q3 donor report printing'}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#003279]"
                 />
               </div>
 
@@ -292,7 +612,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg shadow-xs"
+                  className="px-4 py-2 bg-[#003279] hover:bg-[#002254] text-white font-semibold rounded-lg shadow-xs"
                 >
                   {isSubmitting ? 'Recording...' : 'Commit Stock Ledger'}
                 </button>

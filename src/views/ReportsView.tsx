@@ -125,7 +125,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs text-slate-500 block">Total Fixed Assets Valuation</span>
           <span className="text-2xl font-bold font-mono text-slate-900 mt-1 block">
-            ${totalValuation.toLocaleString()}
+            PKR {totalValuation.toLocaleString()}
           </span>
           <span className="text-[11px] text-slate-400 mt-0.5 block">{assets.length} capitalized assets</span>
         </div>
@@ -133,7 +133,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs text-slate-500 block">Total Consumables Valuation</span>
           <span className="text-2xl font-bold font-mono text-emerald-700 mt-1 block">
-            ${consumableValuation.toLocaleString()}
+            PKR {consumableValuation.toLocaleString()}
           </span>
           <span className="text-[11px] text-slate-400 mt-0.5 block">{consumables.length} bulk supply categories</span>
         </div>
@@ -141,7 +141,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs text-slate-500 block">Combined Inventory Net Worth</span>
           <span className="text-2xl font-bold font-mono text-blue-700 mt-1 block">
-            ${(totalValuation + consumableValuation).toLocaleString()}
+            PKR {(totalValuation + consumableValuation).toLocaleString()}
           </span>
           <span className="text-[11px] text-slate-400 mt-0.5 block">Audit book value</span>
         </div>
@@ -213,7 +213,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <th className="py-2.5 px-4">Branch / Location</th>
                 <th className="py-2.5 px-4">Status / Qty</th>
                 <th className="py-2.5 px-4">Assigned To</th>
-                <th className="py-2.5 px-4 text-right">Value ($)</th>
+                <th className="py-2.5 px-4 text-right">Value (PKR)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -226,7 +226,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     <td className="py-3 px-4 text-slate-600">{c.location}</td>
                     <td className="py-3 px-4 font-mono font-bold">{c.currentStock} {c.unit}s</td>
                     <td className="py-3 px-4 text-slate-400">Bulk Stock</td>
-                    <td className="py-3 px-4 text-right font-mono font-bold">${(c.currentStock * c.unitCost).toFixed(2)}</td>
+                    <td className="py-3 px-4 text-right font-mono font-bold">PKR {(c.currentStock * c.unitCost).toLocaleString()}</td>
                   </tr>
                 ))
               ) : selectedReportType === 'by-employee' ? (
@@ -264,7 +264,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <span className="font-semibold text-slate-800">{a.status}</span>
                     </td>
                     <td className="py-3 px-4 text-slate-700">{a.assignedTo || 'Unassigned'}</td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">${a.purchaseCost}</td>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">PKR {a.purchaseCost?.toLocaleString() ?? 0}</td>
                   </tr>
                 ))
               )}

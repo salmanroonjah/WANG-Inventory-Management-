@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Send, 
   Camera, 
   Search, 
   AlertCircle, 
-  CheckCircle2,
+  CheckCircle2, 
   Printer,
   Boxes,
   Calendar,
@@ -22,6 +22,7 @@ interface IssueAssetViewProps {
   onOpenScanner: () => void;
   employees: Employee[];
   allAssets?: Asset[];
+  initialAssetId?: string | null;
   onIssueSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
   canManage: boolean;
@@ -31,6 +32,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   onOpenScanner,
   employees,
   allAssets = [],
+  initialAssetId,
   onIssueSuccess,
   onPrintVoucher,
   canManage
@@ -39,6 +41,13 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   const [asset, setAsset] = useState<Asset | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialAssetId) {
+      setAssetIdInput(initialAssetId);
+      handleLookup(initialAssetId);
+    }
+  }, [initialAssetId]);
 
   // Form State
   const [selectedEmpId, setSelectedEmpId] = useState('');

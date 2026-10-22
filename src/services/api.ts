@@ -28,6 +28,7 @@ import {
   saveTransactionToFirestore,
   fetchConsumablesFromFirestore,
   saveConsumableToFirestore,
+  deleteConsumableFromFirestore,
   fetchCategoriesFromFirestore,
   saveCategoryToFirestore,
   deleteCategoryFromFirestore,
@@ -1850,6 +1851,93 @@ export const api = {
     }
     if (data && data.success) return data;
     return { success: true, message: 'Stock adjusted' };
+  },
+
+  async createConsumable(payload: Partial<ConsumableItem>): Promise<{ success: boolean; message: string; item: ConsumableItem }> {
+    const data = await safeFetch<any>(`/consumables`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const store = getLocalStore();
+    let code = payload.itemCode?.trim().toUpperCase();
+    if (!code) {
+      const highestNum = (store.consumables || []).reduce((max: number, c: any) => {
+        const match = c.itemCode?.match(/\d+/);
+        return match ? Math.max(max, parseInt(match[0], 10)) : max;
+      }, 0);
+      code = `CON-${String(highestNum + 1).padStart(3, '0')}`;
+    }
+
+    const newItem: ConsumableItem = {
+      itemCode: code,
+      itemName: payload.itemName?.trim() || 'New Supply Item',
+      category: payload.category?.trim() || 'Office Supplies',
+      unit: payload.unit?.trim() || 'Unit',
+      openingBalance: Number(payload.openingBalance) || Number(payload.currentStock) || 0,
+      currentStock: Number(payload.currentStock) || 0,
+      minimumThreshold: Number(payload.minimumThreshold) || 5,
+      unitCost: Number(payload.unitCost) || 0,
+      location: payload.location?.trim() || 'Central Store - Shelf 1',
+      supplier: payload.supplier?.trim() || 'General Supplier',
+      lastUpdated: new Date().toISOString()
+    };
+
+    if (!Array.isArray(store.consumables)) store.consumables = [];
+    store.consumables = store.consumables.filter((c: any) => c.itemCode !== code);
+    store.consumables.push(newItem);
+
+    const log: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'CREATE_CONSUMABLE',
+      recordType: 'Consumable',
+      recordId: code,
+      details: `Added new consumable supply item "${newItem.itemName}" (${code}). Stock: ${newItem.currentStock} ${newItem.unit}s.`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(log);
+    saveActivityLogToFirestore(log).catch(() => {});
+
+    saveLocalStore(store);
+    saveConsumableToFirestore(newItem).catch(() => {});
+
+    if (data && data.success && data.item) return data;
+    return { success: true, message: `Consumable ${newItem.itemName} registered successfully`, item: newItem };
+  },
+
+  async deleteConsumable(itemCode: string): Promise<{ success: boolean; message: string }> {
+    const cleanCode = itemCode.trim().toUpperCase();
+    const data = await safeFetch<any>(`/consumables/${encodeURIComponent(cleanCode)}`, {
+      method: 'DELETE'
+    });
+    const store = getLocalStore();
+    const idx = (store.consumables || []).findIndex((c: any) => c.itemCode?.toUpperCase() === cleanCode);
+    if (idx !== -1) {
+      const removed = store.consumables.splice(idx, 1)[0];
+      const delLog: ActivityLog = {
+        logId: `LOG-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        userId: store.user.userId,
+        userName: store.user.name,
+        userRole: store.user.role,
+        action: 'DELETE_CONSUMABLE',
+        recordType: 'Consumable',
+        recordId: cleanCode,
+        details: `Deleted consumable item "${removed?.itemName || cleanCode}" (${cleanCode}).`
+      };
+      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+      store.activityLogs.unshift(delLog);
+      saveActivityLogToFirestore(delLog).catch(() => {});
+      saveLocalStore(store);
+      deleteConsumableFromFirestore(cleanCode).catch(() => {});
+      return { success: true, message: `Consumable ${cleanCode} deleted.` };
+    }
+    if (data && data.success) return data;
+    return { success: true, message: 'Consumable deleted' };
   },
 
   async getTransactions(filters?: any): Promise<AssetTransaction[]> {

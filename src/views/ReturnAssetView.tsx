@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   RotateCcw, 
   Camera, 
@@ -21,6 +21,7 @@ import { api } from '../services/api.js';
 interface ReturnAssetViewProps {
   onOpenScanner: () => void;
   allAssets?: Asset[];
+  initialAssetId?: string | null;
   onReturnSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
   canManage: boolean;
@@ -29,6 +30,7 @@ interface ReturnAssetViewProps {
 export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   onOpenScanner,
   allAssets = [],
+  initialAssetId,
   onReturnSuccess,
   onPrintVoucher,
   canManage
@@ -37,6 +39,13 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   const [asset, setAsset] = useState<Asset | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialAssetId) {
+      setAssetIdInput(initialAssetId);
+      handleLookup(initialAssetId);
+    }
+  }, [initialAssetId]);
 
   // Form State
   const [returnCondition, setReturnCondition] = useState<AssetCondition>('Good');

@@ -45,9 +45,28 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [isCustomRoom, setIsCustomRoom] = useState(false);
+
   const availableBranches = useMemo(() => {
     const list = Array.from(new Set(locations.map(l => l.officeBranch?.trim()).filter(Boolean)));
     return list.length > 0 ? list : ['Bela', 'Head Office - Islamabad', 'Field Office - Quetta'];
+  }, [locations]);
+
+  // Group locations by Building and OfficeBranch for instant structured selection
+  const groupedBuildings = useMemo(() => {
+    const map = new Map<string, { city: string; building: string; rooms: LocationRecord[] }>();
+    locations.forEach(loc => {
+      const bKey = `${loc.officeBranch || 'General'}:::${loc.building || 'Main'}`;
+      if (!map.has(bKey)) {
+        map.set(bKey, {
+          city: loc.officeBranch || 'General',
+          building: loc.building || 'Main',
+          rooms: []
+        });
+      }
+      map.get(bKey)!.rooms.push(loc);
+    });
+    return Array.from(map.values());
   }, [locations]);
 
   const branchRooms = useMemo(() => {
@@ -66,7 +85,11 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setPurchaseCost(String(assetToEdit.purchaseCost || 0));
       setSupplier(assetToEdit.supplier || '');
       setOfficeBranch(assetToEdit.officeBranch || 'Head Office - Islamabad');
-      setBuildingRoom(assetToEdit.buildingRoom || 'Central Store - Bay A');
+      const targetRoom = assetToEdit.buildingRoom || 'Central Store - Bay A';
+      setBuildingRoom(targetRoom);
+      // Check if targetRoom exists in locations
+      const exists = locations.some(l => `${l.building} - ${l.room}` === targetRoom || l.room === targetRoom);
+      setIsCustomRoom(!exists && Boolean(targetRoom));
       setCondition(assetToEdit.condition || 'Good');
       setStatus(assetToEdit.status || 'Available');
       setWarrantyExpiry(assetToEdit.warrantyExpiry || '');
@@ -85,9 +108,10 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setPurchaseDate(new Date().toISOString().split('T')[0]);
       setPurchaseCost('0');
       const defaultBranch = availableBranches[0] || 'Bela';
-      const defaultRoom = locations.find(l => l.officeBranch === defaultBranch);
-      setOfficeBranch(defaultBranch);
+      const defaultRoom = locations.find(l => l.officeBranch === defaultBranch) || locations[0];
+      setOfficeBranch(defaultRoom?.officeBranch || defaultBranch);
       setBuildingRoom(defaultRoom ? `${defaultRoom.building} - ${defaultRoom.room}` : 'Central Store - Bay A');
+      setIsCustomRoom(false);
       setCondition('Good');
       setStatus('Available');
       setWarrantyExpiry('');
@@ -96,7 +120,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setRecordCompletion('Complete');
       setError(null);
     }
-  }, [assetToEdit, categories, isOpen]);
+  }, [assetToEdit, categories, isOpen, locations]);
 
   const generateAutoId = (catId: string) => {
     const selectedCategory = categories.find(c => c.categoryId === catId);
@@ -330,6 +354,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
                   const matchingLoc = locations.find(l => l.officeBranch?.toLowerCase() === newBranch.toLowerCase());
                   if (matchingLoc) {
                     setBuildingRoom(`${matchingLoc.building} - ${matchingLoc.room}`);
+                    setIsCustomRoom(false);
                   }
                 }}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
@@ -340,21 +365,66 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
               </select>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1">Building Room / Bay *</label>
-              <input
-                type="text"
-                required
-                list="registered-rooms-list"
-                value={buildingRoom}
-                onChange={(e) => setBuildingRoom(e.target.value)}
-                placeholder="e.g. Head Office Building - Room 1: WANG Office"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-              />
-              <datalist id="registered-rooms-list">
-                {branchRooms.map((l) => (
-                  <option key={l.locationId} value={`${l.building} - ${l.room}`} />
-                ))}
-              </datalist>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-800">
+                  Building Room / Bay *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsCustomRoom(!isCustomRoom)}
+                  className="text-[10px] text-[#003279] hover:underline font-bold"
+                >
+                  {isCustomRoom ? '← Select Registered Room' : '+ Enter Custom Room'}
+                </button>
+              </div>
+
+              {!isCustomRoom && locations.length > 0 ? (
+                <select
+                  required
+                  value={buildingRoom}
+                  onChange={(e) => {
+                    if (e.target.value === '__CUSTOM__') {
+                      setIsCustomRoom(true);
+                    } else {
+                      setBuildingRoom(e.target.value);
+                      const foundLoc = locations.find(l => `${l.building} - ${l.room}` === e.target.value);
+                      if (foundLoc && foundLoc.officeBranch) {
+                        setOfficeBranch(foundLoc.officeBranch);
+                      }
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
+                >
+                  <option value="" disabled>-- Select Building & Room --</option>
+                  {groupedBuildings.map((bg) => (
+                    <optgroup key={`${bg.city}-${bg.building}`} label={`🏢 ${bg.building} (${bg.city})`}>
+                      {bg.rooms.map((l) => {
+                        const val = `${l.building} - ${l.room}`;
+                        return (
+                          <option key={l.locationId} value={val}>
+                            {l.room} {l.floor ? `· ${l.floor}` : ''}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  ))}
+                  <option value="__CUSTOM__">✍️ Enter Custom Room / Bay manually...</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={buildingRoom}
+                  onChange={(e) => setBuildingRoom(e.target.value)}
+                  placeholder="e.g. Head Office Building - Room 1: WANG Office"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                />
+              )}
+              <span className="text-[10px] text-slate-500 mt-0.5 block">
+                {locations.length > 0
+                  ? `Linked dynamically with ${locations.length} room(s) from Offices & Rooms.`
+                  : 'No rooms registered yet. Type custom room or add in Offices & Rooms.'}
+              </span>
             </div>
           </div>
 
@@ -406,7 +476,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1">Purchase Cost (USD)</label>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Purchase Cost (PKR) *</label>
               <input
                 type="number"
                 min="0"
@@ -414,7 +484,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
                 value={purchaseCost}
                 onChange={(e) => setPurchaseCost(e.target.value)}
                 placeholder="0.00"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
               />
             </div>
             <div>

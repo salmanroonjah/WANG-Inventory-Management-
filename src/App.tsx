@@ -90,6 +90,9 @@ export default function App() {
   const [inventoryLocationFilter, setInventoryLocationFilter] = useState('all');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all');
 
+  const [issueScannedId, setIssueScannedId] = useState<string | null>(null);
+  const [returnScannedId, setReturnScannedId] = useState<string | null>(null);
+
   const canManage = currentUser.role === 'Super Admin' || 
     currentUser.role === 'Inventory & Finance Admin' || 
     currentUser.role === 'IT Administrator' || 
@@ -336,11 +339,16 @@ export default function App() {
             {currentTab === 'issue' && (
               <IssueAssetView
                 onOpenScanner={() => handleOpenScanner((id) => {
+                  setIssueScannedId(id);
                   setCurrentTab('issue');
                 }, 'Scan Asset to Issue')}
+                initialAssetId={issueScannedId}
                 employees={employees}
                 allAssets={assets}
-                onIssueSuccess={handleIssueSuccess}
+                onIssueSuccess={(a, tx) => {
+                  setIssueScannedId(null);
+                  handleIssueSuccess(a, tx);
+                }}
                 onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
                 canManage={canManage}
               />
@@ -349,10 +357,15 @@ export default function App() {
             {currentTab === 'return' && (
               <ReturnAssetView
                 onOpenScanner={() => handleOpenScanner((id) => {
+                  setReturnScannedId(id);
                   setCurrentTab('return');
                 }, 'Scan Returning Asset')}
+                initialAssetId={returnScannedId}
                 allAssets={assets}
-                onReturnSuccess={handleReturnSuccess}
+                onReturnSuccess={(a, tx) => {
+                  setReturnScannedId(null);
+                  handleReturnSuccess(a, tx);
+                }}
                 onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
                 canManage={canManage}
               />
