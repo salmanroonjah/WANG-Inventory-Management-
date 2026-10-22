@@ -144,6 +144,24 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    // Live multi-device cloud synchronization via Firestore
+    const unsubscribe = api.subscribeToCloudSync((payload) => {
+      if (payload.assets) setAssets(payload.assets);
+      if (payload.employees) setEmployees(payload.employees);
+      if (payload.categories) setCategories(payload.categories);
+      if (payload.locations) setLocations(payload.locations);
+      if (payload.consumables) setConsumables(payload.consumables);
+      if (payload.transactions) setTransactions(payload.transactions);
+      if (payload.requests) setRequests(payload.requests);
+      if (payload.maintenance) setMaintenance(payload.maintenance);
+      if (payload.activityLogs) setActivityLogs(payload.activityLogs);
+      api.getDashboardStats().then(s => setStats(s)).catch(() => {});
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Quick scanner handler
@@ -251,6 +269,11 @@ export default function App() {
       await api.resetDemoData();
       await loadData();
     }
+  };
+
+  const handleClearActivityLogs = async () => {
+    await api.clearActivityLogs();
+    await loadData();
   };
 
   return (
@@ -456,7 +479,11 @@ export default function App() {
             )}
 
             {currentTab === 'activity' && (
-              <ActivityLogsView logs={activityLogs} />
+              <ActivityLogsView 
+                logs={activityLogs} 
+                userRole={currentUser.role}
+                onClearHistory={handleClearActivityLogs}
+              />
             )}
 
             {currentTab === 'sheets' && (

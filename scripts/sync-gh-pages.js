@@ -30,24 +30,37 @@ if (fs.existsSync(path.join(distDir, '404.html'))) {
 fs.writeFileSync(path.join(rootDir, '.nojekyll'), '# Disable Jekyll\n');
 console.log('[SYNC] Created ./.nojekyll');
 
-// 4. Copy dist/assets to root assets
+// 4. Copy dist/assets to root assets recursively
 const rootAssetsDir = path.join(rootDir, 'assets');
 const distAssetsDir = path.join(distDir, 'assets');
 
-if (fs.existsSync(distAssetsDir)) {
-  if (!fs.existsSync(rootAssetsDir)) {
-    fs.mkdirSync(rootAssetsDir, { recursive: true });
-  }
-
-  const files = fs.readdirSync(distAssetsDir);
-  for (const file of files) {
-    const srcPath = path.join(distAssetsDir, file);
-    const destPath = path.join(rootAssetsDir, file);
-    if (fs.statSync(srcPath).isFile()) {
+function copyDirRecursive(src, dest) {
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
       fs.copyFileSync(srcPath, destPath);
     }
   }
-  console.log(`[SYNC] Synced ${files.length} asset files to ./assets/`);
+}
+
+if (fs.existsSync(distAssetsDir)) {
+  copyDirRecursive(distAssetsDir, rootAssetsDir);
+  console.log('[SYNC] Recursively synced dist/assets/ -> ./assets/');
+}
+
+// 5. Ensure public logo files are at root and assets
+const publicLogo = path.join(rootDir, 'public', 'wang_logo.png');
+if (fs.existsSync(publicLogo)) {
+  fs.copyFileSync(publicLogo, path.join(rootDir, 'wang_logo.png'));
+  const targetAistudio = path.join(rootAssetsDir, 'aistudio');
+  if (!fs.existsSync(targetAistudio)) fs.mkdirSync(targetAistudio, { recursive: true });
+  fs.copyFileSync(publicLogo, path.join(targetAistudio, 'wang_logo.png'));
+  console.log('[SYNC] Synced wang_logo.png to ./wang_logo.png and ./assets/aistudio/wang_logo.png');
 }
 
 console.log('[SYNC SUCCESS] Root is now 100% prepared and synchronized for GitHub Pages root deployment!');

@@ -243,7 +243,7 @@ export interface ActivityLog {
   userName: string;
   userRole: UserRole;
   action: string;
-  recordType: 'Asset' | 'Employee' | 'Consumable' | 'Maintenance' | 'Audit' | 'SheetsSync' | 'Request' | 'Category' | 'Location';
+  recordType: 'Asset' | 'Employee' | 'Consumable' | 'Maintenance' | 'Audit' | 'SheetsSync' | 'Request' | 'Category' | 'Location' | 'System';
   recordId: string;
   timestamp: string;
   details: string;

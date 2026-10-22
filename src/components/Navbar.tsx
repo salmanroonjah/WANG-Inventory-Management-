@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Camera, ChevronDown, RefreshCw, Menu, Download, Shield, User } from 'lucide-react';
 import { UserRole, UserSession } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import wangLogo from '../assets/wang_logo.png';
 
 interface NavbarProps {
   currentUser: UserSession;
@@ -82,7 +83,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Desktop only: Logo with 'Welfare Association for New Generation' underneath */}
             <div className="hidden md:flex flex-col items-start justify-center shrink-0">
               <img 
-                src="/assets/aistudio/wang_logo.png" 
+                src={wangLogo}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = 'https://lh3.googleusercontent.com/d/1-Eu4c2k7m7kO_1F54_QfxB-6vJZCWqSJ';
+                }}
                 alt="WANG Logo" 
                 className="h-7 md:h-8 w-auto object-contain shrink-0 drop-shadow-sm transition-transform hover:scale-105"
               />

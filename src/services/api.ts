@@ -40,6 +40,9 @@ import {
   saveMaintenanceToFirestore,
   fetchActivityLogsFromFirestore,
   saveActivityLogToFirestore,
+  clearActivityLogsFromFirestore,
+  subscribeToWANGDatabase,
+  RealtimeSyncPayload,
   fetchUserFromFirestore,
   saveUserToFirestore
 } from './firestoreDb.js';
@@ -714,10 +717,10 @@ export const api = {
       supplier: asset.supplier || '',
       officeBranch: asset.officeBranch || 'Head Office - Islamabad',
       buildingRoom: asset.buildingRoom || 'Central Store - Bay A',
-      assignedEmployeeId: '',
-      assignedTo: '',
+      assignedEmployeeId: asset.assignedEmployeeId || '',
+      assignedTo: asset.assignedTo || '',
       condition: asset.condition || 'Good',
-      status: 'Available',
+      status: asset.status || 'Available',
       warrantyExpiry: asset.warrantyExpiry || '',
       invoiceDocLink: asset.invoiceDocLink || '',
       remarks: asset.remarks || '',
@@ -730,6 +733,48 @@ export const api = {
     }
     store.assets = store.assets.filter((a: any) => a.assetId.toUpperCase() !== newAsset.assetId.toUpperCase());
     store.assets.unshift(newAsset);
+
+    // 1. Cross-section: Update category totalAssets
+    const targetCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === newAsset.categoryId.toUpperCase());
+    if (targetCat) {
+      targetCat.totalAssets = (targetCat.totalAssets || 0) + 1;
+      saveCategoryToFirestore(targetCat).catch(() => {});
+    }
+
+    // 2. Cross-section: Update location assetCount
+    const targetLoc = store.locations.find((l: any) => 
+      l.room && newAsset.buildingRoom && (l.room === newAsset.buildingRoom || newAsset.buildingRoom.includes(l.room))
+    );
+    if (targetLoc) {
+      targetLoc.assetCount = (targetLoc.assetCount || 0) + 1;
+      saveLocationToFirestore(targetLoc).catch(() => {});
+    }
+
+    // 3. Cross-section: If assigned to employee at creation, update employee count
+    if (newAsset.assignedEmployeeId && newAsset.status === 'Issued') {
+      const targetEmp = store.employees.find((e: any) => e.employeeId === newAsset.assignedEmployeeId);
+      if (targetEmp) {
+        targetEmp.assignedAssetCount = (targetEmp.assignedAssetCount || 0) + 1;
+        saveEmployeeToFirestore(targetEmp).catch(() => {});
+      }
+    }
+
+    // 4. Create ActivityLog
+    const regLog: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'REGISTER_ASSET',
+      recordType: 'Asset',
+      recordId: newAsset.assetId,
+      details: `New asset ${newAsset.assetId} (${newAsset.itemName}) registered in category "${newAsset.categoryName}".`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(regLog);
+    saveActivityLogToFirestore(regLog).catch(() => {});
+
     saveLocalStore(store);
     saveAssetToFirestore(newAsset).catch(() => {});
     if (data && data.success) return data;
@@ -749,7 +794,39 @@ export const api = {
     const store = getLocalStore();
     const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === id.toUpperCase());
     if (asset) {
+      const oldCat = asset.categoryId;
+      const oldRoom = asset.buildingRoom;
+
       Object.assign(asset, updates, { lastUpdated: new Date().toISOString() });
+
+      // If category changed, update category totals
+      if (updates.categoryId && updates.categoryId !== oldCat) {
+        const prevCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === oldCat.toUpperCase());
+        if (prevCat && prevCat.totalAssets > 0) {
+          prevCat.totalAssets = Math.max(0, prevCat.totalAssets - 1);
+          saveCategoryToFirestore(prevCat).catch(() => {});
+        }
+        const nextCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === updates.categoryId!.toUpperCase());
+        if (nextCat) {
+          nextCat.totalAssets = (nextCat.totalAssets || 0) + 1;
+          saveCategoryToFirestore(nextCat).catch(() => {});
+        }
+      }
+
+      // If location changed, update location counts
+      if (updates.buildingRoom && updates.buildingRoom !== oldRoom) {
+        const prevLoc = store.locations.find((l: any) => l.room && oldRoom && (l.room === oldRoom || oldRoom.includes(l.room)));
+        if (prevLoc && prevLoc.assetCount > 0) {
+          prevLoc.assetCount = Math.max(0, prevLoc.assetCount - 1);
+          saveLocationToFirestore(prevLoc).catch(() => {});
+        }
+        const nextLoc = store.locations.find((l: any) => l.room && updates.buildingRoom && (l.room === updates.buildingRoom || updates.buildingRoom.includes(l.room)));
+        if (nextLoc) {
+          nextLoc.assetCount = (nextLoc.assetCount || 0) + 1;
+          saveLocationToFirestore(nextLoc).catch(() => {});
+        }
+      }
+
       saveLocalStore(store);
       saveAssetToFirestore(asset).catch(() => {});
     }
@@ -770,8 +847,37 @@ export const api = {
     let removedAsset: Asset | undefined;
     if (idx !== -1) {
       removedAsset = store.assets.splice(idx, 1)[0];
-      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-      store.activityLogs.unshift({
+
+      if (removedAsset) {
+        // Cross-section: Decrement category count
+        if (removedAsset.categoryId) {
+          const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === removedAsset!.categoryId.toUpperCase());
+          if (cat && cat.totalAssets > 0) {
+            cat.totalAssets = Math.max(0, cat.totalAssets - 1);
+            saveCategoryToFirestore(cat).catch(() => {});
+          }
+        }
+
+        // Cross-section: Decrement location count
+        if (removedAsset.buildingRoom) {
+          const loc = store.locations.find((l: any) => l.room && removedAsset!.buildingRoom && (l.room === removedAsset!.buildingRoom || removedAsset!.buildingRoom.includes(l.room)));
+          if (loc && loc.assetCount > 0) {
+            loc.assetCount = Math.max(0, loc.assetCount - 1);
+            saveLocationToFirestore(loc).catch(() => {});
+          }
+        }
+
+        // Cross-section: Decrement employee assigned count if issued
+        if (removedAsset.assignedEmployeeId && removedAsset.status === 'Issued') {
+          const emp = store.employees.find((e: any) => e.employeeId === removedAsset!.assignedEmployeeId);
+          if (emp && emp.assignedAssetCount > 0) {
+            emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
+            saveEmployeeToFirestore(emp).catch(() => {});
+          }
+        }
+      }
+
+      const delLog: ActivityLog = {
         logId: `LOG-${Date.now()}`,
         timestamp: new Date().toISOString(),
         userId: store.user.userId,
@@ -781,7 +887,11 @@ export const api = {
         recordType: 'Asset',
         recordId: cleanId,
         details: `Deleted asset ${removedAsset ? removedAsset.itemName : cleanId} (${cleanId})`
-      });
+      };
+
+      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+      store.activityLogs.unshift(delLog);
+      saveActivityLogToFirestore(delLog).catch(() => {});
       saveLocalStore(store);
     }
 
@@ -807,14 +917,39 @@ export const api = {
     // 1. Blacklist permanently in localStorage
     addDeletedAssetIds(cleanIds);
 
-    // 2. Remove from local store
+    // 2. Remove from local store and adjust linked entities
     const store = getLocalStore();
     const beforeCount = store.assets.length;
+    const toDelete = store.assets.filter((a: any) => cleanIds.includes(a.assetId.toUpperCase()));
     store.assets = store.assets.filter((a: any) => !cleanIds.includes(a.assetId.toUpperCase()));
     const deletedCount = beforeCount - store.assets.length;
 
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift({
+    // Cross-section updates for all deleted items
+    for (const rem of toDelete) {
+      if (rem.categoryId) {
+        const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === rem.categoryId.toUpperCase());
+        if (cat && cat.totalAssets > 0) {
+          cat.totalAssets = Math.max(0, cat.totalAssets - 1);
+          saveCategoryToFirestore(cat).catch(() => {});
+        }
+      }
+      if (rem.buildingRoom) {
+        const loc = store.locations.find((l: any) => l.room && rem.buildingRoom && (l.room === rem.buildingRoom || rem.buildingRoom.includes(l.room)));
+        if (loc && loc.assetCount > 0) {
+          loc.assetCount = Math.max(0, loc.assetCount - 1);
+          saveLocationToFirestore(loc).catch(() => {});
+        }
+      }
+      if (rem.assignedEmployeeId && rem.status === 'Issued') {
+        const emp = store.employees.find((e: any) => e.employeeId === rem.assignedEmployeeId);
+        if (emp && emp.assignedAssetCount > 0) {
+          emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
+          saveEmployeeToFirestore(emp).catch(() => {});
+        }
+      }
+    }
+
+    const batchLog: ActivityLog = {
       logId: `LOG-${Date.now()}`,
       timestamp: new Date().toISOString(),
       userId: store.user.userId,
@@ -824,7 +959,11 @@ export const api = {
       recordType: 'Asset',
       recordId: cleanIds.join(','),
       details: `Batch deleted ${deletedCount} assets (${cleanIds.slice(0, 5).join(', ')}${cleanIds.length > 5 ? '...' : ''})`
-    });
+    };
+
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(batchLog);
+    saveActivityLogToFirestore(batchLog).catch(() => {});
     saveLocalStore(store);
 
     // 3. Await Firestore deletions concurrently
@@ -901,6 +1040,27 @@ export const api = {
       dueDate: payload.dueDate
     };
     store.transactions.unshift(tx);
+
+    // Update employee assigned asset count
+    emp.assignedAssetCount = (emp.assignedAssetCount || 0) + 1;
+    saveEmployeeToFirestore(emp).catch(() => {});
+
+    // Create activity log
+    const issueLog: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'ISSUE_ASSET',
+      recordType: 'Asset',
+      recordId: asset.assetId,
+      details: `Asset ${asset.assetId} (${asset.itemName}) was issued to ${emp.fullName} (${emp.employeeId}).`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(issueLog);
+    saveActivityLogToFirestore(issueLog).catch(() => {});
+
     saveLocalStore(store);
     saveAssetToFirestore(asset).catch(() => {});
     saveTransactionToFirestore(tx).catch(() => {});
@@ -947,26 +1107,122 @@ export const api = {
       previousStatus: 'Issued',
       newStatus: newStatus,
       condition: payload.returnCondition,
-      notes: payload.notes || `Returned by ${prevEmp}`
+      notes: payload.notes || `Returned by ${prevEmp || 'Staff'}`
     };
     store.transactions.unshift(tx);
+
+    // Decrement previous employee assigned count
+    if (prevEmpId) {
+      const prevEmpObj = store.employees.find((e: any) => e.employeeId === prevEmpId);
+      if (prevEmpObj) {
+        prevEmpObj.assignedAssetCount = Math.max(0, (prevEmpObj.assignedAssetCount || 1) - 1);
+        saveEmployeeToFirestore(prevEmpObj).catch(() => {});
+      }
+    }
+
+    // Create activity log
+    const returnLog: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'RETURN_ASSET',
+      recordType: 'Asset',
+      recordId: asset.assetId,
+      details: `Asset ${asset.assetId} (${asset.itemName}) returned by ${prevEmp || 'Staff'}. Condition: ${payload.returnCondition}. Status: ${newStatus}.`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(returnLog);
+    saveActivityLogToFirestore(returnLog).catch(() => {});
+
     saveLocalStore(store);
     saveAssetToFirestore(asset).catch(() => {});
     saveTransactionToFirestore(tx).catch(() => {});
     return { success: true, message: `Asset returned. Status: ${newStatus}`, asset, transaction: tx };
   },
 
-  async transferAsset(payload: any): Promise<any> {
+  async transferAsset(payload: {
+    assetId: string;
+    targetLocation: string;
+    officeBranch?: string;
+    notes?: string;
+  }): Promise<{ success: boolean; message: string; asset?: Asset; transaction?: AssetTransaction }> {
     const data = await safeFetch<any>(`/assets/transfer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    const store = getLocalStore();
+    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
+    if (asset) {
+      const oldRoom = asset.buildingRoom;
+      const oldBranch = asset.officeBranch;
+
+      asset.buildingRoom = payload.targetLocation;
+      if (payload.officeBranch) asset.officeBranch = payload.officeBranch;
+      asset.lastUpdated = new Date().toISOString();
+
+      // Update location asset counts
+      const prevLoc = store.locations.find((l: any) => l.room && oldRoom && (l.room === oldRoom || oldRoom.includes(l.room)));
+      if (prevLoc && prevLoc.assetCount > 0) {
+        prevLoc.assetCount = Math.max(0, prevLoc.assetCount - 1);
+        saveLocationToFirestore(prevLoc).catch(() => {});
+      }
+      const nextLoc = store.locations.find((l: any) => l.room && payload.targetLocation && (l.room === payload.targetLocation || payload.targetLocation.includes(l.room)));
+      if (nextLoc) {
+        nextLoc.assetCount = (nextLoc.assetCount || 0) + 1;
+        saveLocationToFirestore(nextLoc).catch(() => {});
+      }
+
+      const tx: AssetTransaction = {
+        transactionId: `TX-${Date.now()}`,
+        assetId: asset.assetId,
+        assetName: asset.itemName,
+        employeeId: asset.assignedEmployeeId,
+        employeeName: asset.assignedTo,
+        transactionType: 'TRANSFER',
+        performedByUserId: store.user.userId,
+        performedByName: store.user.name,
+        timestamp: new Date().toISOString(),
+        previousStatus: asset.status,
+        newStatus: asset.status,
+        condition: asset.condition,
+        location: payload.targetLocation,
+        notes: payload.notes || `Relocated from ${oldRoom} to ${payload.targetLocation}`
+      };
+      store.transactions.unshift(tx);
+      saveTransactionToFirestore(tx).catch(() => {});
+
+      const transferLog: ActivityLog = {
+        logId: `LOG-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        userId: store.user.userId,
+        userName: store.user.name,
+        userRole: store.user.role,
+        action: 'TRANSFER_ASSET',
+        recordType: 'Asset',
+        recordId: asset.assetId,
+        details: `Asset ${asset.assetId} transferred to ${payload.targetLocation} (${payload.officeBranch || asset.officeBranch}).`
+      };
+      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+      store.activityLogs.unshift(transferLog);
+      saveActivityLogToFirestore(transferLog).catch(() => {});
+
+      saveLocalStore(store);
+      saveAssetToFirestore(asset).catch(() => {});
+      if (data && data.success) return data;
+      return { success: true, message: `Transferred successfully to ${payload.targetLocation}`, asset, transaction: tx };
+    }
     if (data && data.success) return data;
     return { success: true, message: 'Transferred successfully' };
   },
 
-  async reportMissingOrLost(payload: any): Promise<any> {
+  async reportMissingOrLost(payload: {
+    assetId: string;
+    status: 'Missing' | 'Lost';
+    reason: string;
+  }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
     const data = await safeFetch<any>(`/assets/report-missing`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -976,8 +1232,21 @@ export const api = {
     const store = getLocalStore();
     const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
     if (!asset) throw new Error('Asset not found');
+
+    const prevAssignedEmpId = asset.assignedEmployeeId;
     asset.status = payload.status;
     asset.remarks = `[${payload.status}]: ${payload.reason}`;
+    asset.lastUpdated = new Date().toISOString();
+
+    // If asset was issued, decrement the employee's active count
+    if (prevAssignedEmpId) {
+      const emp = store.employees.find((e: any) => e.employeeId === prevAssignedEmpId);
+      if (emp && emp.assignedAssetCount > 0) {
+        emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
+        saveEmployeeToFirestore(emp).catch(() => {});
+      }
+    }
+
     const tx: AssetTransaction = {
       transactionId: `TX-${Date.now()}`,
       assetId: asset.assetId,
@@ -994,18 +1263,91 @@ export const api = {
       notes: payload.reason
     };
     store.transactions.unshift(tx);
+    saveTransactionToFirestore(tx).catch(() => {});
+
+    const log: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: payload.status === 'Missing' ? 'REPORT_MISSING' : 'REPORT_LOST',
+      recordType: 'Asset',
+      recordId: asset.assetId,
+      details: `Asset ${asset.assetId} (${asset.itemName}) was marked as ${payload.status}. Reason: ${payload.reason}`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(log);
+    saveActivityLogToFirestore(log).catch(() => {});
+
     saveLocalStore(store);
+    saveAssetToFirestore(asset).catch(() => {});
     return { success: true, message: `Asset marked as ${payload.status}`, asset, transaction: tx };
   },
 
-  async resolveMissingStatus(payload: any): Promise<any> {
+  async resolveMissingStatus(payload: {
+    assetId: string;
+    newStatus: 'Available' | 'Under Maintenance';
+    condition: AssetCondition;
+    resolutionNotes: string;
+    location?: string;
+  }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
     const data = await safeFetch<any>(`/assets/resolve-status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (data && data.success) return data;
-    return { success: true, message: 'Status resolved' };
+    if (data && data.success && data.asset && data.transaction) return data;
+    const store = getLocalStore();
+    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
+    if (!asset) throw new Error('Asset not found');
+
+    const previousStatus = asset.status;
+    asset.status = payload.newStatus || 'Available';
+    asset.condition = payload.condition || 'Good';
+    asset.assignedEmployeeId = '';
+    asset.assignedTo = '';
+    if (payload.location) asset.buildingRoom = payload.location;
+    asset.remarks = `[Resolved ${previousStatus}]: ${payload.resolutionNotes}`;
+    asset.lastUpdated = new Date().toISOString();
+
+    const tx: AssetTransaction = {
+      transactionId: `TX-${Date.now()}`,
+      assetId: asset.assetId,
+      assetName: asset.itemName,
+      employeeId: '',
+      employeeName: '',
+      transactionType: 'RESOLVE_MISSING',
+      performedByUserId: store.user.userId,
+      performedByName: store.user.name,
+      timestamp: new Date().toISOString(),
+      previousStatus: previousStatus,
+      newStatus: asset.status,
+      condition: asset.condition,
+      notes: payload.resolutionNotes,
+      location: asset.buildingRoom
+    };
+    store.transactions.unshift(tx);
+    saveTransactionToFirestore(tx).catch(() => {});
+
+    const resLog: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'RESOLVE_STATUS',
+      recordType: 'Asset',
+      recordId: asset.assetId,
+      details: `Asset ${asset.assetId} (${asset.itemName}) recovered from ${previousStatus} to ${asset.status}. Notes: ${payload.resolutionNotes}`
+    };
+    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+    store.activityLogs.unshift(resLog);
+    saveActivityLogToFirestore(resLog).catch(() => {});
+
+    saveLocalStore(store);
+    saveAssetToFirestore(asset).catch(() => {});
+    return { success: true, message: `Status resolved to ${asset.status}`, asset, transaction: tx };
   },
 
   async getEmployees(): Promise<Employee[]> {
@@ -1536,6 +1878,60 @@ export const api = {
     return getLocalStore().activityLogs;
   },
 
+  async clearActivityLogs(): Promise<{ success: boolean; message: string }> {
+    const store = getLocalStore();
+    if (store.user.role !== 'Super Admin') {
+      throw new Error('Unauthorized: Only Super Admin (Executive Director) has permission to clear audit history.');
+    }
+
+    // 1. Clear from Firestore
+    try {
+      await clearActivityLogsFromFirestore(store.user);
+    } catch (err) {
+      console.warn('[Firestore] Note clearing cloud logs:', err);
+    }
+
+    // 2. Clear from LocalStore and record reset marker
+    const resetLog: ActivityLog = {
+      logId: `LOG-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: store.user.userId,
+      userName: store.user.name,
+      userRole: store.user.role,
+      action: 'AUDIT_TRAIL_CLEARED',
+      recordType: 'System',
+      recordId: 'AUDIT-HISTORY',
+      details: `Audit trail history was cleared by Super Admin (${store.user.name}).`
+    };
+    store.activityLogs = [resetLog];
+    saveLocalStore(store);
+
+    // 3. Inform backend if running
+    safeFetch<any>('/activity-logs/clear', { method: 'POST' }).catch(() => {});
+
+    return { success: true, message: 'Audit trail history was successfully cleared.' };
+  },
+
+  subscribeToCloudSync(callback: (payload: RealtimeSyncPayload) => void): () => void {
+    return subscribeToWANGDatabase((payload) => {
+      // Update local storage so cache is always warm
+      const store = getLocalStore();
+      if (payload.assets) store.assets = payload.assets;
+      if (payload.employees) store.employees = payload.employees;
+      if (payload.categories) store.categories = payload.categories;
+      if (payload.locations) store.locations = payload.locations;
+      if (payload.consumables) store.consumables = payload.consumables;
+      if (payload.transactions) store.transactions = payload.transactions;
+      if (payload.requests) store.requests = payload.requests;
+      if (payload.maintenance) store.maintenance = payload.maintenance;
+      if (payload.activityLogs) store.activityLogs = payload.activityLogs;
+      saveLocalStore(store);
+
+      // Trigger UI update
+      callback(payload);
+    });
+  },
+
   async getRequests(): Promise<AssetRequest[]> {
     const data = await safeFetch<{ success: boolean; requests: AssetRequest[] }>(`/requests`);
     if (data && data.success) return data.requests;
@@ -1644,6 +2040,40 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
     });
+    const store = getLocalStore();
+    const mnt = (store.maintenance || []).find((m: any) => m.maintenanceId === id);
+    if (mnt) {
+      Object.assign(mnt, updates);
+      saveLocalStore(store);
+      saveMaintenanceToFirestore(mnt).catch(() => {});
+
+      // Cross-section: If maintenance is completed, restore asset to Available
+      if (updates.status === 'Completed' && mnt.assetId) {
+        const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === mnt.assetId.toUpperCase());
+        if (asset && asset.status === 'Under Maintenance') {
+          asset.status = 'Available';
+          asset.condition = 'Good';
+          asset.lastUpdated = new Date().toISOString();
+          saveLocalStore(store);
+          saveAssetToFirestore(asset).catch(() => {});
+
+          const mntLog: ActivityLog = {
+            logId: `LOG-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            userId: store.user.userId,
+            userName: store.user.name,
+            userRole: store.user.role,
+            action: 'COMPLETE_MAINTENANCE',
+            recordType: 'Asset',
+            recordId: asset.assetId,
+            details: `Maintenance completed for asset ${asset.assetId} (${asset.itemName}). Restored to Available.`
+          };
+          if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
+          store.activityLogs.unshift(mntLog);
+          saveActivityLogToFirestore(mntLog).catch(() => {});
+        }
+      }
+    }
   },
 
   async getAudits(): Promise<PhysicalAudit[]> {

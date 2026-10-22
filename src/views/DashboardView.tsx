@@ -14,6 +14,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { DashboardStats, UserRole, ViewTab } from '../types/inventory.js';
+import wangLogo from '../assets/wang_logo.png';
 
 interface DashboardViewProps {
   stats: DashboardStats;
@@ -35,7 +36,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="relative z-10 max-w-2xl">
           <div className="flex items-center gap-3 mb-3">
             <img 
-              src="/assets/aistudio/wang_logo.png" 
+              src={wangLogo} 
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = 'https://lh3.googleusercontent.com/d/1-Eu4c2k7m7kO_1F54_QfxB-6vJZCWqSJ';
+              }}
               alt="WANG Logo" 
               className="h-14 sm:h-16 w-auto object-contain shrink-0 drop-shadow-xl transition-transform hover:scale-105"
             />

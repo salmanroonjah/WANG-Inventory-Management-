@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Printer, X, Download, ShieldCheck } from 'lucide-react';
 import { Asset, AssetTransaction } from '../types/inventory.js';
 import { BarcodeBadge } from './BarcodeBadge.js';
+import wangLogo from '../assets/wang_logo.png';
 
 interface HandoverReceiptModalProps {
   isOpen: boolean;
@@ -61,7 +62,10 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
             <div className="flex items-center gap-3.5">
               <div className="h-14 px-3.5 py-1.5 bg-[#003279] rounded-xl flex items-center justify-center shrink-0 shadow-xs">
                 <img 
-                  src="/assets/aistudio/wang_logo.png" 
+                  src={wangLogo}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = 'https://lh3.googleusercontent.com/d/1-Eu4c2k7m7kO_1F54_QfxB-6vJZCWqSJ';
+                  }}
                   alt="WANG Logo" 
                   className="h-10 w-auto object-contain"
                 />

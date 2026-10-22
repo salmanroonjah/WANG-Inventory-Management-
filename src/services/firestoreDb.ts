@@ -7,7 +7,8 @@ import {
   deleteDoc, 
   query, 
   orderBy, 
-  writeBatch 
+  writeBatch,
+  onSnapshot
 } from 'firebase/firestore';
 import { db, ensureFirebaseAuth } from './firebase.js';
 import { 
@@ -327,3 +328,149 @@ export async function saveUserToFirestore(user: UserSession): Promise<void> {
     await setDoc(doc(db, 'systemSettings', 'activeUser'), user);
   } catch (err) {}
 }
+
+// --- SUPER ADMIN AUDIT TRAIL RESET ---
+export async function clearActivityLogsFromFirestore(user: UserSession): Promise<void> {
+  try {
+    await ensureFirebaseAuth();
+    const snap = await getDocs(collection(db, 'activityLogs'));
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => {
+      batch.delete(d.ref);
+    });
+    // Record official reset log
+    const resetLogId = `LOG-${Date.now()}`;
+    const resetLogDoc = doc(db, 'activityLogs', resetLogId);
+    batch.set(resetLogDoc, {
+      logId: resetLogId,
+      timestamp: new Date().toISOString(),
+      userId: user.userId,
+      userName: user.name,
+      userRole: user.role,
+      action: 'AUDIT_TRAIL_CLEARED',
+      recordType: 'System',
+      recordId: 'AUDIT-HISTORY',
+      details: `Audit trail history was cleared by Super Admin (${user.name}).`
+    });
+    await batch.commit();
+  } catch (err) {
+    console.error('[Firestore] Error clearing activity logs:', err);
+    throw err;
+  }
+}
+
+// --- REAL-TIME MULTI-DEVICE CLOUD SYNC SUBSCRIPTION ---
+export interface RealtimeSyncPayload {
+  assets?: Asset[];
+  employees?: Employee[];
+  categories?: Category[];
+  locations?: LocationRecord[];
+  consumables?: ConsumableItem[];
+  transactions?: AssetTransaction[];
+  requests?: AssetRequest[];
+  maintenance?: MaintenanceRecord[];
+  activityLogs?: ActivityLog[];
+}
+
+export function subscribeToWANGDatabase(onUpdate: (payload: RealtimeSyncPayload) => void): () => void {
+  const unsubscribers: (() => void)[] = [];
+
+  ensureFirebaseAuth().then(() => {
+    try {
+      // 1. Assets Realtime Listener
+      const unsubAssets = onSnapshot(collection(db, 'assets'), (snap) => {
+        if (!snap.empty) {
+          const assets = snap.docs.map(d => d.data() as Asset);
+          onUpdate({ assets });
+        }
+      }, (err) => console.warn('[Firestore] Assets sync listener notice:', err));
+      unsubscribers.push(unsubAssets);
+
+      // 2. Employees Realtime Listener
+      const unsubEmployees = onSnapshot(collection(db, 'employees'), (snap) => {
+        if (!snap.empty) {
+          const employees = snap.docs.map(d => d.data() as Employee);
+          onUpdate({ employees });
+        }
+      }, (err) => console.warn('[Firestore] Employees sync listener notice:', err));
+      unsubscribers.push(unsubEmployees);
+
+      // 3. Categories Realtime Listener
+      const unsubCategories = onSnapshot(collection(db, 'categories'), (snap) => {
+        if (!snap.empty) {
+          const categories = snap.docs.map(d => d.data() as Category);
+          onUpdate({ categories });
+        }
+      }, (err) => console.warn('[Firestore] Categories sync listener notice:', err));
+      unsubscribers.push(unsubCategories);
+
+      // 4. Locations Realtime Listener
+      const unsubLocations = onSnapshot(collection(db, 'locations'), (snap) => {
+        if (!snap.empty) {
+          const locations = snap.docs.map(d => d.data() as LocationRecord);
+          onUpdate({ locations });
+        }
+      }, (err) => console.warn('[Firestore] Locations sync listener notice:', err));
+      unsubscribers.push(unsubLocations);
+
+      // 5. Consumables Realtime Listener
+      const unsubConsumables = onSnapshot(collection(db, 'consumables'), (snap) => {
+        if (!snap.empty) {
+          const consumables = snap.docs.map(d => d.data() as ConsumableItem);
+          onUpdate({ consumables });
+        }
+      }, (err) => console.warn('[Firestore] Consumables sync listener notice:', err));
+      unsubscribers.push(unsubConsumables);
+
+      // 6. Transactions Realtime Listener
+      const unsubTransactions = onSnapshot(collection(db, 'transactions'), (snap) => {
+        if (!snap.empty) {
+          const transactions = snap.docs
+            .map(d => d.data() as AssetTransaction)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          onUpdate({ transactions });
+        }
+      }, (err) => console.warn('[Firestore] Transactions sync listener notice:', err));
+      unsubscribers.push(unsubTransactions);
+
+      // 7. Requests Realtime Listener
+      const unsubRequests = onSnapshot(collection(db, 'requests'), (snap) => {
+        if (!snap.empty) {
+          const requests = snap.docs
+            .map(d => d.data() as AssetRequest)
+            .sort((a, b) => new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime());
+          onUpdate({ requests });
+        }
+      }, (err) => console.warn('[Firestore] Requests sync listener notice:', err));
+      unsubscribers.push(unsubRequests);
+
+      // 8. Maintenance Realtime Listener
+      const unsubMaintenance = onSnapshot(collection(db, 'maintenance'), (snap) => {
+        if (!snap.empty) {
+          const maintenance = snap.docs.map(d => d.data() as MaintenanceRecord);
+          onUpdate({ maintenance });
+        }
+      }, (err) => console.warn('[Firestore] Maintenance sync listener notice:', err));
+      unsubscribers.push(unsubMaintenance);
+
+      // 9. Activity Logs Realtime Listener
+      const unsubLogs = onSnapshot(collection(db, 'activityLogs'), (snap) => {
+        if (!snap.empty) {
+          const activityLogs = snap.docs
+            .map(d => d.data() as ActivityLog)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          onUpdate({ activityLogs });
+        }
+      }, (err) => console.warn('[Firestore] Activity logs sync listener notice:', err));
+      unsubscribers.push(unsubLogs);
+
+    } catch (err) {
+      console.warn('[Firestore] Error initializing realtime listeners:', err);
+    }
+  });
+
+  return () => {
+    unsubscribers.forEach(unsub => unsub());
+  };
+}
+
