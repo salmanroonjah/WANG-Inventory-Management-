@@ -396,6 +396,7 @@ export default function App() {
               <ConsumablesView
                 consumables={consumables}
                 employees={employees}
+                locations={locations}
                 onRefresh={loadData}
                 canManage={canManage}
               />

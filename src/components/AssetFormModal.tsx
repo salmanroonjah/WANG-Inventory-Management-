@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, AlertCircle, PlusCircle, Edit, Sparkles } from 'lucide-react';
+import { X, Save, AlertCircle, PlusCircle, Edit, Sparkles, MapPin } from 'lucide-react';
 import { Asset, AssetCondition, AssetStatus, Category, LocationRecord, RecordCompletion } from '../types/inventory.js';
 import { api } from '../services/api.js';
 import { BuildingRoomSelector } from './BuildingRoomSelector.js';
@@ -343,21 +343,8 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
             </div>
           </div>
 
-          {/* Location & Room */}
-          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1">City / Office Branch *</label>
-              <select
-                value={officeBranch}
-                onChange={(e) => setOfficeBranch(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
-              >
-                {availableBranches.map((branch) => (
-                  <option key={branch} value={branch}>{branch}</option>
-                ))}
-              </select>
-            </div>
-
+          {/* Location & Room - 2-Step Cascading Selection */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <BuildingRoomSelector
               locations={locations}
               value={buildingRoom}
@@ -366,9 +353,16 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
                 if (branch) setOfficeBranch(branch);
               }}
               required
-              buildingLabel="1. Select Building (From Offices & Rooms) *"
-              roomLabel="2. Select Room in Building *"
+              buildingLabel="1. Select Building (Offices & Rooms) *"
+              roomLabel="2. Select Room in Selected Building *"
             />
+            {officeBranch && (
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-600 pt-1">
+                <MapPin className="w-3.5 h-3.5 text-[#003279]" />
+                <span>Station / City:</span>
+                <span className="font-semibold text-slate-800">{officeBranch}</span>
+              </div>
+            )}
           </div>
 
           {/* Condition & Status */}

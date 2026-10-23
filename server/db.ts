@@ -526,60 +526,7 @@ const INITIAL_SEED: DatabaseSchema = {
       lastUpdated: '2026-09-18T16:00:00Z'
     }
   ],
-  consumables: [
-    {
-      itemCode: 'CON-PAP-A4',
-      itemName: 'Double A A4 Copier Paper 80gsm',
-      category: 'Stationery & Printing',
-      unit: 'Ream',
-      openingBalance: 50,
-      currentStock: 42,
-      minimumThreshold: 15,
-      unitCost: 4.80,
-      location: 'Central Store - Shelf 1',
-      supplier: 'OfficeDepot Pakistan',
-      lastUpdated: '2026-10-12T10:00:00Z'
-    },
-    {
-      itemCode: 'CON-INK-01',
-      itemName: 'HP LaserJet 148A Black Toner Cartridge',
-      category: 'Printer Consumables',
-      unit: 'Cartridge',
-      openingBalance: 6,
-      currentStock: 2,
-      minimumThreshold: 3,
-      unitCost: 85.00,
-      location: 'Central Store - Cabinet B',
-      supplier: 'TechZone Islamabad',
-      lastUpdated: '2026-10-14T11:30:00Z'
-    },
-    {
-      itemCode: 'CON-PEN-01',
-      itemName: 'Pilot G2 0.7mm Retractable Gel Ink Pens (Box of 12)',
-      category: 'Office Supplies',
-      unit: 'Box',
-      openingBalance: 20,
-      currentStock: 14,
-      minimumThreshold: 5,
-      unitCost: 16.50,
-      location: 'Central Store - Shelf 2',
-      supplier: 'OfficeDepot Pakistan',
-      lastUpdated: '2026-10-08T09:00:00Z'
-    },
-    {
-      itemCode: 'CON-BAT-AA',
-      itemName: 'Energizer Industrial Alkaline AA Batteries (Pack of 24)',
-      category: 'Power & Batteries',
-      unit: 'Pack',
-      openingBalance: 15,
-      currentStock: 3,
-      minimumThreshold: 4,
-      unitCost: 22.00,
-      location: 'Central Store - Shelf 3',
-      supplier: 'TechZone Islamabad',
-      lastUpdated: '2026-10-16T15:00:00Z'
-    }
-  ],
+  consumables: [],
   transactions: [
     {
       transactionId: 'TX-2024-001',
@@ -1906,6 +1853,14 @@ class Database {
       };
     }
 
+    const linkedEmployees = this.data.employees.filter(e => e.officeBranch && (e.officeBranch.includes(loc.room) || e.officeBranch.includes(loc.building)));
+    if (linkedEmployees.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete location: "${loc.room}" has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map(e => e.fullName).slice(0, 2).join(', ')}). Reassign staff first.`
+      };
+    }
+
     this.data.locations.splice(index, 1);
     this.logActivity({
       userId: performedBy.userId,
@@ -1934,6 +1889,12 @@ class Database {
     this.data.assets.forEach(a => {
       if (a.officeBranch?.toLowerCase() === oldCity.toLowerCase()) {
         a.officeBranch = newCity.trim();
+      }
+    });
+
+    this.data.employees.forEach(e => {
+      if (e.officeBranch && e.officeBranch.toLowerCase().includes(oldBuilding.toLowerCase())) {
+        e.officeBranch = e.officeBranch.replace(new RegExp(oldBuilding, 'gi'), newBuilding.trim());
       }
     });
 
@@ -1966,6 +1927,16 @@ class Database {
           message: `Cannot delete building "${buildingName}": Room "${roomLoc.room}" has ${linkedAssets.length} active asset(s). Reassign them first.`
         };
       }
+    }
+
+    const linkedEmployees = this.data.employees.filter(
+      e => e.officeBranch && e.officeBranch.toLowerCase().includes(buildingName.toLowerCase())
+    );
+    if (linkedEmployees.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete building "${buildingName}": Has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map(e => e.fullName).slice(0, 2).join(', ')}). Reassign staff first.`
+      };
     }
 
     const beforeCount = this.data.locations.length;

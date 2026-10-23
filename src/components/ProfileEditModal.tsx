@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, User, Mail, Phone, Building, Briefcase, AlertCircle, Shield, CheckCircle2 } from 'lucide-react';
-import { UserSession, Employee } from '../types/inventory.js';
+import { UserSession, Employee, LocationRecord } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface ProfileEditModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserSession;
   employeeRecord?: Employee | null;
+  locations?: LocationRecord[];
   onSuccess: (updatedUser: UserSession) => void;
 }
 
@@ -16,13 +18,14 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
   onClose,
   currentUser,
   employeeRecord,
+  locations = [],
   onSuccess
 }) => {
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email);
   const [phone, setPhone] = useState(employeeRecord?.phone || '+92 300 8765432');
   const [designation, setDesignation] = useState(employeeRecord?.designation || 'Executive Director');
-  const [officeBranch, setOfficeBranch] = useState(currentUser.officeBranch || employeeRecord?.officeBranch || 'Head Office - Islamabad');
+  const [officeBranch, setOfficeBranch] = useState(currentUser.officeBranch || employeeRecord?.officeBranch || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -205,22 +208,17 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             </div>
           </div>
 
-          {/* Office Branch */}
-          <div>
-            <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-              <Building className="w-3.5 h-3.5 text-[#003279]" />
-              Primary Office Branch
-            </label>
-            <select
+          {/* Office Branch / Station Location */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <BuildingRoomSelector
+              locations={locations}
               value={officeBranch}
-              onChange={(e) => setOfficeBranch(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-            >
-              <option value="Head Office - Islamabad">Head Office - Islamabad</option>
-              <option value="Field Office - Quetta">Field Office - Quetta</option>
-              <option value="Field Office - Lasbela">Field Office - Lasbela</option>
-              <option value="Regional Office - Karachi">Regional Office - Karachi</option>
-            </select>
+              onChange={(val, branch) => {
+                setOfficeBranch(val || branch || '');
+              }}
+              buildingLabel="Primary Office Building *"
+              roomLabel="Office Room / Suite *"
+            />
           </div>
 
           {/* Footer Buttons */}

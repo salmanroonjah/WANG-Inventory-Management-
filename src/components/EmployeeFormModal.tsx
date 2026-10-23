@@ -10,6 +10,7 @@ interface EmployeeFormModalProps {
   employeeToEdit: Employee | null;
   currentUserRole: UserRole;
   locations?: LocationRecord[];
+  existingDepartments?: string[];
   onSuccess: (savedEmployee: Employee) => void;
 }
 
@@ -19,18 +20,24 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   employeeToEdit,
   currentUserRole,
   locations = [],
+  existingDepartments = [],
   onSuccess
 }) => {
   const isEditing = !!employeeToEdit;
   const isExecutiveDirector = employeeToEdit?.employeeId === 'EMP-001';
 
+  // Default initial location from registered locations if available
+  const defaultLoc = locations.length > 0
+    ? `${locations[0].building} - ${locations[0].room}`
+    : '';
+
   const [employeeId, setEmployeeId] = useState('');
   const [fullName, setFullName] = useState('');
-  const [department, setDepartment] = useState('Admin & Finance');
+  const [department, setDepartment] = useState('');
   const [designation, setDesignation] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [officeBranch, setOfficeBranch] = useState('Head Office - Islamabad');
+  const [officeBranch, setOfficeBranch] = useState(defaultLoc);
   const [role, setRole] = useState<UserRole>('Employee');
   const [activeStatus, setActiveStatus] = useState(true);
 
@@ -41,27 +48,27 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
     if (employeeToEdit) {
       setEmployeeId(employeeToEdit.employeeId);
       setFullName(employeeToEdit.fullName);
-      setDepartment(employeeToEdit.department);
-      setDesignation(employeeToEdit.designation);
-      setEmail(employeeToEdit.email);
-      setPhone(employeeToEdit.phone);
-      setOfficeBranch(employeeToEdit.officeBranch);
+      setDepartment(employeeToEdit.department || '');
+      setDesignation(employeeToEdit.designation || '');
+      setEmail(employeeToEdit.email || '');
+      setPhone(employeeToEdit.phone || '');
+      setOfficeBranch(employeeToEdit.officeBranch || defaultLoc);
       setRole(employeeToEdit.role || 'Employee');
       setActiveStatus(employeeToEdit.activeStatus);
       setError(null);
     } else {
       setEmployeeId('');
       setFullName('');
-      setDepartment('Admin & Finance');
+      setDepartment('');
       setDesignation('');
       setEmail('');
       setPhone('');
-      setOfficeBranch('Head Office - Islamabad');
+      setOfficeBranch(defaultLoc);
       setRole('Employee');
       setActiveStatus(true);
       setError(null);
     }
-  }, [employeeToEdit, isOpen]);
+  }, [employeeToEdit, isOpen, defaultLoc]);
 
   if (!isOpen) return null;
 
@@ -70,13 +77,10 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
     if (!designation) {
       if (newRole === 'Inventory & Finance Admin') {
         setDesignation('Manager Admin & Finance');
-        setDepartment('Admin & Finance');
       } else if (newRole === 'IT Administrator') {
         setDesignation('IT Systems Administrator');
-        setDepartment('IT Department');
       } else if (newRole === 'Super Admin') {
         setDesignation('Executive Director');
-        setDepartment('Executive Management');
       }
     }
   };
@@ -221,19 +225,25 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                 <Building className="w-3.5 h-3.5 text-[#003279]" />
                 Department *
               </label>
-              <select
+              <input
+                type="text"
+                required
+                list="department-datalist"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
+                placeholder="Enter department name..."
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-              >
-                <option value="Admin & Finance">Admin & Finance</option>
-                <option value="IT Department">IT Department</option>
-                <option value="Executive Management">Executive Management</option>
-                <option value="Finance & Compliance">Finance & Compliance</option>
-                <option value="Logistics & Field Support">Logistics & Field Support</option>
-                <option value="Program Operations">Program Operations</option>
-                <option value="Community Outreach">Community Outreach</option>
-              </select>
+              />
+              {existingDepartments && existingDepartments.length > 0 && (
+                <datalist id="department-datalist">
+                  {existingDepartments.map((dept) => (
+                    <option key={dept} value={dept} />
+                  ))}
+                </datalist>
+              )}
+              <span className="text-[10px] text-slate-500 mt-0.5 block">
+                User-defined department (no predefined defaults).
+              </span>
             </div>
 
             <div>
@@ -413,35 +423,33 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
             </div>
           </div>
 
-          {/* Office Branch & Building/Room */}
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+          {/* Station / Office Location linked dynamically to Offices & Rooms */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 <Building className="w-3.5 h-3.5 text-[#003279]" />
-                Stationed Office Branch / City *
+                Station / Office Location *
               </label>
-              <select
-                value={officeBranch}
-                onChange={(e) => setOfficeBranch(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-              >
-                <option value="Head Office - Islamabad">Head Office - Islamabad</option>
-                <option value="Field Office - Quetta">Field Office - Quetta</option>
-                <option value="Field Office - Lasbela">Field Office - Lasbela</option>
-                <option value="Regional Office - Karachi">Regional Office - Karachi</option>
-              </select>
+              {locations.length > 0 && (
+                <span className="text-[10px] font-semibold text-[#003279] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                  Offices & Rooms System Data
+                </span>
+              )}
             </div>
 
             <BuildingRoomSelector
               locations={locations}
               value={officeBranch}
               onChange={(val, branch) => {
-                if (val) setOfficeBranch(val);
-                else if (branch) setOfficeBranch(branch);
+                setOfficeBranch(val || branch || '');
               }}
-              buildingLabel="Stationed Building (Offices & Rooms) *"
+              required
+              buildingLabel="Stationed Building (From Offices & Rooms) *"
               roomLabel="Stationed Office Room / Bay *"
             />
+            <span className="text-[10px] text-slate-500 block">
+              Only offices and rooms created through the Offices & Rooms section appear here.
+            </span>
           </div>
 
           {/* Active Status Checkbox */}

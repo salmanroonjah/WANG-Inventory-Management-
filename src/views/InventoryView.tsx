@@ -96,13 +96,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
-  // Dynamic distinct locations from registered locations list
+  // Dynamic distinct locations from registered locations list (cities, buildings, rooms)
   const distinctLocations = useMemo(() => {
-    const branches = new Set<string>();
+    const locSet = new Set<string>();
     locations.forEach(l => {
-      if (l.officeBranch) branches.add(l.officeBranch);
+      if (l.officeBranch) locSet.add(l.officeBranch);
+      if (l.building) locSet.add(l.building);
+      if (l.building && l.room) locSet.add(`${l.building} - ${l.room}`);
     });
-    return Array.from(branches).sort();
+    return Array.from(locSet).sort();
   }, [locations]);
 
   // Quick stats summary

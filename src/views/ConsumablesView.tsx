@@ -14,12 +14,13 @@ import {
   Tag,
   MapPin
 } from 'lucide-react';
-import { ConsumableItem, Employee } from '../types/inventory.js';
+import { ConsumableItem, Employee, LocationRecord } from '../types/inventory.js';
 import { api } from '../services/api.js';
 
 interface ConsumablesViewProps {
   consumables: ConsumableItem[];
   employees: Employee[];
+  locations?: LocationRecord[];
   onRefresh: () => void;
   canManage: boolean;
 }
@@ -27,6 +28,7 @@ interface ConsumablesViewProps {
 export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
   consumables,
   employees,
+  locations = [],
   onRefresh,
   canManage
 }) => {
@@ -70,6 +72,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
       const match = c.itemCode?.match(/\d+/);
       return match ? Math.max(max, parseInt(match[0], 10)) : max;
     }, 0);
+    const defaultLoc = locations.length > 0 ? `${locations[0].building} - ${locations[0].room}` : '';
     setNewItemCode(`CON-${String(highestNum + 1).padStart(3, '0')}`);
     setNewItemName('');
     setNewCategory('Stationery & Printing');
@@ -77,7 +80,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
     setNewStock('10');
     setNewThreshold('3');
     setNewUnitCost('500');
-    setNewLocation('Central Store - Shelf 1');
+    setNewLocation(defaultLoc);
     setNewSupplier('');
     setCreateError(null);
     setIsCreateModalOpen(true);
@@ -445,11 +448,19 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                   <label className="block font-bold text-slate-800 mb-1">Storage Location</label>
                   <input
                     type="text"
+                    list="consumable-location-options"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
-                    placeholder="e.g. Central Store - Shelf 1"
+                    placeholder="e.g. Select or type facility/room"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#003279]"
                   />
+                  {locations.length > 0 && (
+                    <datalist id="consumable-location-options">
+                      {locations.map((l) => (
+                        <option key={l.locationId} value={`${l.building} - ${l.room}`} />
+                      ))}
+                    </datalist>
+                  )}
                 </div>
               </div>
 

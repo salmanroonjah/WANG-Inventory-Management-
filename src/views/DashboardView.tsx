@@ -199,23 +199,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="space-y-3">
-            {stats.categoryDistribution.map((cat) => {
-              const pct = stats.totalAssets > 0 ? Math.round((cat.count / stats.totalAssets) * 100) : 0;
-              return (
-                <div key={cat.category} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-medium">
-                    <span className="text-slate-800">{cat.category}</span>
-                    <span className="text-slate-500 font-mono">{cat.count} items ({pct}%)</span>
+            {stats.categoryDistribution.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">
+                No asset categories registered yet.
+              </p>
+            ) : (
+              stats.categoryDistribution.map((cat) => {
+                const pct = stats.totalAssets > 0 ? Math.round((cat.count / stats.totalAssets) * 100) : 0;
+                return (
+                  <div key={cat.category} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span className="text-slate-800">{cat.category}</span>
+                      <span className="text-slate-500 font-mono">{cat.count} items ({pct}%)</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-slate-800 rounded-full" 
+                        style={{ width: `${pct}%` }} 
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-slate-800 rounded-full" 
-                      style={{ width: `${pct}%` }} 
-                    />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -294,37 +300,46 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {stats.recentTransactions.map((tx) => (
-                <tr key={tx.transactionId} className="hover:bg-slate-50 transition-colors">
-                  <td className="py-3 px-4 font-mono text-slate-500">{tx.transactionId}</td>
-                  <td className="py-3 px-4">
-                    <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
-                      tx.transactionType === 'ISSUE' ? 'bg-emerald-100 text-emerald-800' :
-                      tx.transactionType === 'RETURN' ? 'bg-blue-100 text-blue-800' :
-                      tx.transactionType === 'REPORT_MISSING' ? 'bg-rose-100 text-rose-800' :
-                      'bg-slate-100 text-slate-800'
-                    }`}>
-                      {tx.transactionType}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="font-bold text-slate-900 block">{tx.assetName}</span>
-                    <span className="font-mono text-slate-500 text-[10px]">{tx.assetId}</span>
-                  </td>
-                  <td className="py-3 px-4 text-slate-800">
-                    {tx.employeeName || 'N/A'}
-                  </td>
-                  <td className="py-3 px-4 text-slate-600">
-                    {tx.performedByName}
-                  </td>
-                  <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                    {new Date(tx.timestamp).toLocaleString()}
-                  </td>
-                  <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
-                    {tx.notes}
+              {stats.recentTransactions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <p className="font-medium text-slate-500">No operational transactions recorded yet.</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Issue or return assets to see the live activity log.</p>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                stats.recentTransactions.map((tx) => (
+                  <tr key={tx.transactionId} className="hover:bg-slate-50 transition-colors">
+                    <td className="py-3 px-4 font-mono text-slate-500">{tx.transactionId}</td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
+                        tx.transactionType === 'ISSUE' ? 'bg-emerald-100 text-emerald-800' :
+                        tx.transactionType === 'RETURN' ? 'bg-blue-100 text-blue-800' :
+                        tx.transactionType === 'REPORT_MISSING' ? 'bg-rose-100 text-rose-800' :
+                        'bg-slate-100 text-slate-800'
+                      }`}>
+                        {tx.transactionType}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="font-bold text-slate-900 block">{tx.assetName}</span>
+                      <span className="font-mono text-slate-500 text-[10px]">{tx.assetId}</span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-800">
+                      {tx.employeeName || 'N/A'}
+                    </td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {tx.performedByName}
+                    </td>
+                    <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
+                      {new Date(tx.timestamp).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
+                      {tx.notes}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

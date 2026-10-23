@@ -378,12 +378,7 @@ const FALLBACK_SEED = {
       lastUpdated: '2026-09-18T16:00:00Z'
     }
   ],
-  consumables: [
-    { itemCode: 'CON-PAP-A4', itemName: 'Double A A4 Copier Paper 80gsm', category: 'Stationery & Printing', unit: 'Ream', openingBalance: 50, currentStock: 42, minimumThreshold: 15, unitCost: 4.80, location: 'Central Store - Shelf 1', supplier: 'OfficeDepot Pakistan', lastUpdated: '2026-10-12T10:00:00Z' },
-    { itemCode: 'CON-INK-01', itemName: 'HP LaserJet 148A Black Toner Cartridge', category: 'Printer Consumables', unit: 'Cartridge', openingBalance: 6, currentStock: 2, minimumThreshold: 3, unitCost: 85.00, location: 'Central Store - Cabinet B', supplier: 'TechZone Islamabad', lastUpdated: '2026-10-14T11:30:00Z' },
-    { itemCode: 'CON-PEN-01', itemName: 'Pilot G2 0.7mm Retractable Gel Ink Pens (Box of 12)', category: 'Office Supplies', unit: 'Box', openingBalance: 20, currentStock: 14, minimumThreshold: 5, unitCost: 16.50, location: 'Central Store - Shelf 2', supplier: 'OfficeDepot Pakistan', lastUpdated: '2026-10-08T09:00:00Z' },
-    { itemCode: 'CON-BAT-AA', itemName: 'Energizer Industrial Alkaline AA Batteries (Pack of 24)', category: 'Power & Batteries', unit: 'Pack', openingBalance: 15, currentStock: 3, minimumThreshold: 4, unitCost: 22.00, location: 'Central Store - Shelf 3', supplier: 'TechZone Islamabad', lastUpdated: '2026-10-16T15:00:00Z' }
-  ],
+  consumables: [],
   transactions: [
     { transactionId: 'TX-2024-001', assetId: 'WANG-EPS-001', assetName: 'Dell Latitude 5420 Laptop', employeeId: 'EMP-001', employeeName: 'Dr. Salman Khan', transactionType: 'ISSUE', performedByUserId: 'USR-ADMIN', performedByName: 'Admin Manager', timestamp: '2024-03-16T10:00:00Z', previousStatus: 'Available', newStatus: 'Issued', condition: 'New', notes: 'Initial executive issuance with secure corporate credentials.', dueDate: '2026-12-31', location: 'Room 101 - Executive Suite' },
     { transactionId: 'TX-2024-002', assetId: 'WANG-ITC-001', assetName: 'Dell UltraSharp 27" 4K USB-C Hub Monitor', employeeId: 'EMP-002', employeeName: 'Ayesha Noor', transactionType: 'ISSUE', performedByUserId: 'USR-ADMIN', performedByName: 'Admin Manager', timestamp: '2024-08-15T11:00:00Z', previousStatus: 'Available', newStatus: 'Issued', condition: 'Good', notes: 'Issued for GIS and remote field monitoring.', dueDate: '2026-11-30', location: 'East Wing - Operations Floor' },
@@ -431,6 +426,8 @@ export function removeDeletedAssetId(id: string) {
   } catch {}
 }
 
+const LEGACY_DUMMY_CONSUMABLES = new Set(['CON-PAP-A4', 'CON-INK-01', 'CON-PEN-01', 'CON-BAT-AA']);
+
 // LocalStorage Helper for Static / GitHub Hosting Fallback
 function getLocalStore() {
   const deletedSet = getDeletedAssetIds();
@@ -440,6 +437,8 @@ function getLocalStore() {
       const parsed = JSON.parse(raw);
       const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : FALLBACK_SEED.assets;
       const cleanAssets = rawAssets.filter((a: any) => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
+      const rawConsumables = Array.isArray(parsed.consumables) ? parsed.consumables : [];
+      const cleanConsumables = rawConsumables.filter((c: any) => c && c.itemCode && !LEGACY_DUMMY_CONSUMABLES.has(c.itemCode.toUpperCase()));
 
       return {
         user: parsed.user || FALLBACK_SEED.user,
@@ -447,7 +446,7 @@ function getLocalStore() {
         employees: Array.isArray(parsed.employees) ? parsed.employees : FALLBACK_SEED.employees,
         locations: Array.isArray(parsed.locations) ? parsed.locations : FALLBACK_SEED.locations,
         assets: cleanAssets,
-        consumables: Array.isArray(parsed.consumables) ? parsed.consumables : FALLBACK_SEED.consumables,
+        consumables: cleanConsumables,
         transactions: Array.isArray(parsed.transactions) ? parsed.transactions : FALLBACK_SEED.transactions,
         requests: Array.isArray(parsed.requests) ? parsed.requests : [],
         maintenance: Array.isArray(parsed.maintenance) ? parsed.maintenance : [],
@@ -462,6 +461,7 @@ function getLocalStore() {
   const defaultAssets = FALLBACK_SEED.assets.filter((a: any) => !deletedSet.has(a.assetId.toUpperCase()));
   const defaultStore = JSON.parse(JSON.stringify(FALLBACK_SEED));
   defaultStore.assets = defaultAssets;
+  defaultStore.consumables = [];
   return defaultStore;
 }
 
@@ -1736,6 +1736,11 @@ export const api = {
       if (linkedAssets.length > 0) {
         throw new Error(`Cannot delete: Location "${loc.room}" at ${loc.officeBranch} has ${linkedAssets.length} active registered asset(s). Please reassign assets first.`);
       }
+
+      const linkedEmployees = store.employees.filter((e: any) => e.officeBranch && (e.officeBranch.includes(loc.room) || e.officeBranch.includes(loc.building)));
+      if (linkedEmployees.length > 0) {
+        throw new Error(`Cannot delete: Location "${loc.room}" has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map((e: any) => e.fullName).slice(0, 2).join(', ')}). Please reassign staff first.`);
+      }
     }
 
     const data = await safeFetch<any>(`/locations/${encodeURIComponent(cleanId)}`, {
@@ -1781,6 +1786,13 @@ export const api = {
       }
     });
 
+    // Also update matching employee stationed offices
+    store.employees.forEach((e: any) => {
+      if (e.officeBranch && e.officeBranch.toLowerCase().includes(oldBuilding.toLowerCase())) {
+        e.officeBranch = e.officeBranch.replace(new RegExp(oldBuilding, 'gi'), newBuilding.trim());
+      }
+    });
+
     saveLocalStore(store);
     if (data && data.success) return data;
     return { success: true, message: `Building details updated across ${updatedCount} room records` };
@@ -1800,6 +1812,14 @@ export const api = {
       if (linkedAssets.length > 0) {
         throw new Error(`Cannot delete building "${buildingName}": Room "${roomLoc.room}" has ${linkedAssets.length} active asset(s). Reassign assets first.`);
       }
+    }
+
+    // Check if any employee is stationed in this building
+    const linkedEmployees = store.employees.filter(
+      (e: any) => e.officeBranch && e.officeBranch.toLowerCase().includes(buildingName.toLowerCase())
+    );
+    if (linkedEmployees.length > 0) {
+      throw new Error(`Cannot delete building "${buildingName}": Has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map((e: any) => e.fullName).slice(0, 2).join(', ')}). Reassign staff first.`);
     }
 
     const data = await safeFetch<any>('/buildings/delete', {

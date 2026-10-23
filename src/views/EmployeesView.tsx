@@ -901,6 +901,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           employeeToEdit={employeeToEdit}
           currentUserRole={userRole}
           locations={locations}
+          existingDepartments={departments}
           onSuccess={() => {
             if (onRefreshData) onRefreshData();
             if (selectedEmpId) handleSelectEmployee(selectedEmpId);
@@ -915,6 +916,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           onClose={() => setIsProfileModalOpen(false)}
           currentUser={currentUser}
           employeeRecord={executiveDirector}
+          locations={locations}
           onSuccess={(updatedUser) => {
             if (onUpdateCurrentUser) onUpdateCurrentUser(updatedUser);
             if (onRefreshData) onRefreshData();
