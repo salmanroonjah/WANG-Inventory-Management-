@@ -14,13 +14,15 @@ import {
   Clock,
   AlertTriangle
 } from 'lucide-react';
-import { Asset, AssetCondition, AssetTransaction } from '../types/inventory.js';
+import { Asset, AssetCondition, AssetTransaction, LocationRecord } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
+import { BuildingRoomSelector } from '../components/BuildingRoomSelector.js';
 import { api } from '../services/api.js';
 
 interface ReturnAssetViewProps {
   onOpenScanner: () => void;
   allAssets?: Asset[];
+  locations?: LocationRecord[];
   initialAssetId?: string | null;
   onReturnSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
@@ -30,6 +32,7 @@ interface ReturnAssetViewProps {
 export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
   onOpenScanner,
   allAssets = [],
+  locations = [],
   initialAssetId,
   onReturnSuccess,
   onPrintVoucher,
@@ -345,18 +348,13 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
                 </div>
 
                 {/* Storage Return Location */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-[#003279]" />
-                    Storage Location / Bay *
-                  </label>
-                  <input
-                    type="text"
-                    required
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <BuildingRoomSelector
+                    locations={locations}
                     value={targetLocation}
-                    onChange={(e) => setTargetLocation(e.target.value)}
-                    placeholder="e.g. Central Store - Bay A"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                    onChange={(val) => setTargetLocation(val)}
+                    buildingLabel="Return Storage Building *"
+                    roomLabel="Return Storage Room / Bay *"
                   />
                 </div>
 

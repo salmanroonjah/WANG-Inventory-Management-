@@ -281,7 +281,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-slate-100 font-sans flex flex-col text-slate-900 antialiased">
+      <div className="h-screen flex flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 antialiased">
       {/* Top Header Navbar */}
       <Navbar
         currentUser={currentUser}
@@ -345,6 +345,7 @@ export default function App() {
                 initialAssetId={issueScannedId}
                 employees={employees}
                 allAssets={assets}
+                locations={locations}
                 onIssueSuccess={(a, tx) => {
                   setIssueScannedId(null);
                   handleIssueSuccess(a, tx);
@@ -362,6 +363,7 @@ export default function App() {
                 }, 'Scan Returning Asset')}
                 initialAssetId={returnScannedId}
                 allAssets={assets}
+                locations={locations}
                 onReturnSuccess={(a, tx) => {
                   setReturnScannedId(null);
                   handleReturnSuccess(a, tx);
@@ -413,6 +415,7 @@ export default function App() {
               <EmployeesView
                 employees={employees}
                 allAssets={assets}
+                locations={locations}
                 userRole={currentUser.role}
                 currentUser={currentUser}
                 onOpenIssueForEmployee={(empId) => {
@@ -542,6 +545,7 @@ export default function App() {
         onClose={() => setIssueModalAsset(null)}
         asset={issueModalAsset}
         employees={employees}
+        locations={locations}
         onSuccess={handleIssueSuccess}
       />
 
@@ -550,6 +554,7 @@ export default function App() {
         isOpen={!!returnModalAsset}
         onClose={() => setReturnModalAsset(null)}
         asset={returnModalAsset}
+        locations={locations}
         onSuccess={handleReturnSuccess}
       />
 

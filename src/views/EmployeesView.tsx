@@ -28,7 +28,7 @@ import {
   Briefcase,
   ChevronDown
 } from 'lucide-react';
-import { Employee, Asset, AssetTransaction, UserRole, UserSession } from '../types/inventory.js';
+import { Employee, Asset, AssetTransaction, UserRole, UserSession, LocationRecord } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
 import { EmployeeFormModal } from '../components/EmployeeFormModal.js';
 import { ProfileEditModal } from '../components/ProfileEditModal.js';
@@ -37,6 +37,7 @@ import { api } from '../services/api.js';
 interface EmployeesViewProps {
   employees: Employee[];
   allAssets: Asset[];
+  locations?: LocationRecord[];
   userRole: UserRole;
   currentUser: UserSession;
   onOpenIssueForEmployee: (employeeId: string) => void;
@@ -50,6 +51,7 @@ interface EmployeesViewProps {
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
   employees,
   allAssets,
+  locations = [],
   userRole,
   currentUser,
   onOpenIssueForEmployee,
@@ -898,6 +900,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           }}
           employeeToEdit={employeeToEdit}
           currentUserRole={userRole}
+          locations={locations}
           onSuccess={() => {
             if (onRefreshData) onRefreshData();
             if (selectedEmpId) handleSelectEmployee(selectedEmpId);

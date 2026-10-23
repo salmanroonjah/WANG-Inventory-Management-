@@ -14,14 +14,16 @@ import {
   Clock,
   Sparkles
 } from 'lucide-react';
-import { Asset, AssetCondition, Employee, AssetTransaction } from '../types/inventory.js';
+import { Asset, AssetCondition, Employee, AssetTransaction, LocationRecord } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
+import { BuildingRoomSelector } from '../components/BuildingRoomSelector.js';
 import { api } from '../services/api.js';
 
 interface IssueAssetViewProps {
   onOpenScanner: () => void;
   employees: Employee[];
   allAssets?: Asset[];
+  locations?: LocationRecord[];
   initialAssetId?: string | null;
   onIssueSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
@@ -32,6 +34,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   onOpenScanner,
   employees,
   allAssets = [],
+  locations = [],
   initialAssetId,
   onIssueSuccess,
   onPrintVoucher,
@@ -383,17 +386,13 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                 </div>
 
                 {/* Deployment Location / Room */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-[#003279]" />
-                    Deployment Room / Workstation
-                  </label>
-                  <input
-                    type="text"
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <BuildingRoomSelector
+                    locations={locations}
                     value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="e.g. Room 101 - Executive Suite"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                    onChange={(val) => setLocation(val)}
+                    buildingLabel="Deployment Building *"
+                    roomLabel="Deployment Room / Workstation *"
                   />
                 </div>
 

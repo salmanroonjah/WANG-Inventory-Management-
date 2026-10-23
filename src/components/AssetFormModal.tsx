@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X, Save, AlertCircle, PlusCircle, Edit, Sparkles } from 'lucide-react';
 import { Asset, AssetCondition, AssetStatus, Category, LocationRecord, RecordCompletion } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface AssetFormModalProps {
   isOpen: boolean;
@@ -343,89 +344,31 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
           </div>
 
           {/* Location & Room */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
             <div>
               <label className="block text-xs font-bold text-slate-800 mb-1">City / Office Branch *</label>
               <select
                 value={officeBranch}
-                onChange={(e) => {
-                  const newBranch = e.target.value;
-                  setOfficeBranch(newBranch);
-                  const matchingLoc = locations.find(l => l.officeBranch?.toLowerCase() === newBranch.toLowerCase());
-                  if (matchingLoc) {
-                    setBuildingRoom(`${matchingLoc.building} - ${matchingLoc.room}`);
-                    setIsCustomRoom(false);
-                  }
-                }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
+                onChange={(e) => setOfficeBranch(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
               >
                 {availableBranches.map((branch) => (
                   <option key={branch} value={branch}>{branch}</option>
                 ))}
               </select>
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-slate-800">
-                  Building Room / Bay *
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setIsCustomRoom(!isCustomRoom)}
-                  className="text-[10px] text-[#003279] hover:underline font-bold"
-                >
-                  {isCustomRoom ? '← Select Registered Room' : '+ Enter Custom Room'}
-                </button>
-              </div>
 
-              {!isCustomRoom && locations.length > 0 ? (
-                <select
-                  required
-                  value={buildingRoom}
-                  onChange={(e) => {
-                    if (e.target.value === '__CUSTOM__') {
-                      setIsCustomRoom(true);
-                    } else {
-                      setBuildingRoom(e.target.value);
-                      const foundLoc = locations.find(l => `${l.building} - ${l.room}` === e.target.value);
-                      if (foundLoc && foundLoc.officeBranch) {
-                        setOfficeBranch(foundLoc.officeBranch);
-                      }
-                    }
-                  }}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden font-medium"
-                >
-                  <option value="" disabled>-- Select Building & Room --</option>
-                  {groupedBuildings.map((bg) => (
-                    <optgroup key={`${bg.city}-${bg.building}`} label={`🏢 ${bg.building} (${bg.city})`}>
-                      {bg.rooms.map((l) => {
-                        const val = `${l.building} - ${l.room}`;
-                        return (
-                          <option key={l.locationId} value={val}>
-                            {l.room} {l.floor ? `· ${l.floor}` : ''}
-                          </option>
-                        );
-                      })}
-                    </optgroup>
-                  ))}
-                  <option value="__CUSTOM__">✍️ Enter Custom Room / Bay manually...</option>
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  required
-                  value={buildingRoom}
-                  onChange={(e) => setBuildingRoom(e.target.value)}
-                  placeholder="e.g. Head Office Building - Room 1: WANG Office"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-                />
-              )}
-              <span className="text-[10px] text-slate-500 mt-0.5 block">
-                {locations.length > 0
-                  ? `Linked dynamically with ${locations.length} room(s) from Offices & Rooms.`
-                  : 'No rooms registered yet. Type custom room or add in Offices & Rooms.'}
-              </span>
-            </div>
+            <BuildingRoomSelector
+              locations={locations}
+              value={buildingRoom}
+              onChange={(val, branch) => {
+                setBuildingRoom(val);
+                if (branch) setOfficeBranch(branch);
+              }}
+              required
+              buildingLabel="1. Select Building (From Offices & Rooms) *"
+              roomLabel="2. Select Room in Building *"
+            />
           </div>
 
           {/* Condition & Status */}

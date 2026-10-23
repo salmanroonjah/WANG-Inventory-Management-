@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, User, Mail, Phone, Building, Briefcase, Shield, AlertCircle, PlusCircle, Edit, Sparkles } from 'lucide-react';
-import { Employee, UserRole } from '../types/inventory.js';
+import { Employee, UserRole, LocationRecord } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface EmployeeFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   employeeToEdit: Employee | null;
   currentUserRole: UserRole;
+  locations?: LocationRecord[];
   onSuccess: (savedEmployee: Employee) => void;
 }
 
@@ -16,6 +18,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   onClose,
   employeeToEdit,
   currentUserRole,
+  locations = [],
   onSuccess
 }) => {
   const isEditing = !!employeeToEdit;
@@ -410,22 +413,35 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
             </div>
           </div>
 
-          {/* Office Branch */}
-          <div>
-            <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-              <Building className="w-3.5 h-3.5 text-[#003279]" />
-              Stationed Office Branch *
-            </label>
-            <select
+          {/* Office Branch & Building/Room */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                <Building className="w-3.5 h-3.5 text-[#003279]" />
+                Stationed Office Branch / City *
+              </label>
+              <select
+                value={officeBranch}
+                onChange={(e) => setOfficeBranch(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+              >
+                <option value="Head Office - Islamabad">Head Office - Islamabad</option>
+                <option value="Field Office - Quetta">Field Office - Quetta</option>
+                <option value="Field Office - Lasbela">Field Office - Lasbela</option>
+                <option value="Regional Office - Karachi">Regional Office - Karachi</option>
+              </select>
+            </div>
+
+            <BuildingRoomSelector
+              locations={locations}
               value={officeBranch}
-              onChange={(e) => setOfficeBranch(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-            >
-              <option value="Head Office - Islamabad">Head Office - Islamabad</option>
-              <option value="Field Office - Quetta">Field Office - Quetta</option>
-              <option value="Field Office - Lasbela">Field Office - Lasbela</option>
-              <option value="Regional Office - Karachi">Regional Office - Karachi</option>
-            </select>
+              onChange={(val, branch) => {
+                if (val) setOfficeBranch(val);
+                else if (branch) setOfficeBranch(branch);
+              }}
+              buildingLabel="Stationed Building (Offices & Rooms) *"
+              roomLabel="Stationed Office Room / Bay *"
+            />
           </div>
 
           {/* Active Status Checkbox */}

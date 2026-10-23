@@ -67,7 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-[#003279] text-white border-b border-[#002254] shadow-md">
+    <header className="shrink-0 h-14 z-30 bg-[#003279] text-white border-b border-[#002254] shadow-md">
       <div className="px-2.5 sm:px-6 h-14 flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Left: Mobile hamburger & Brand */}
         <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">

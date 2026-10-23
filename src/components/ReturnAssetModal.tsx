@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { X, RotateCcw, AlertCircle, Wrench, CheckCircle2, UserCheck } from 'lucide-react';
-import { Asset, AssetCondition, AssetTransaction } from '../types/inventory.js';
+import { Asset, AssetCondition, AssetTransaction, LocationRecord } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface ReturnAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
   asset: Asset | null;
+  locations?: LocationRecord[];
   onSuccess: (updatedAsset: Asset, transaction: AssetTransaction) => void;
 }
 
@@ -14,6 +16,7 @@ export const ReturnAssetModal: React.FC<ReturnAssetModalProps> = ({
   isOpen,
   onClose,
   asset,
+  locations = [],
   onSuccess
 }) => {
   const [returnCondition, setReturnCondition] = useState<AssetCondition>('Good');
@@ -178,16 +181,13 @@ export const ReturnAssetModal: React.FC<ReturnAssetModalProps> = ({
             </div>
 
             {/* Target Location / Storage Shelf */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Return Storage Location / Bay
-              </label>
-              <input
-                type="text"
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+              <BuildingRoomSelector
+                locations={locations}
                 value={targetLocation}
-                onChange={(e) => setTargetLocation(e.target.value)}
-                placeholder="e.g. Central Store - Bay A, Shelf 2"
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
+                onChange={(val) => setTargetLocation(val)}
+                buildingLabel="Return Building *"
+                roomLabel="Return Storage Room / Bay *"
               />
             </div>
 

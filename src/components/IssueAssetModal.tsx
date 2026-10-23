@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { X, Send, AlertCircle, Calendar, User, CheckCircle2, ShieldAlert } from 'lucide-react';
-import { Asset, AssetCondition, Employee, AssetTransaction } from '../types/inventory.js';
+import { Asset, AssetCondition, Employee, AssetTransaction, LocationRecord } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface IssueAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
   asset: Asset | null;
   employees: Employee[];
+  locations?: LocationRecord[];
   onSuccess: (updatedAsset: Asset, transaction: AssetTransaction) => void;
 }
 
@@ -16,6 +18,7 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
   onClose,
   asset,
   employees,
+  locations = [],
   onSuccess
 }) => {
   const [selectedEmpId, setSelectedEmpId] = useState('');
@@ -221,16 +224,13 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
             </div>
 
             {/* Specific Location / Desk */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Deployment Location / Room
-              </label>
-              <input
-                type="text"
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+              <BuildingRoomSelector
+                locations={locations}
                 value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="e.g. Room 101 - Executive Suite"
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
+                onChange={(val) => setLocation(val)}
+                buildingLabel="Deployment Building *"
+                roomLabel="Deployment Room *"
               />
             </div>
 
