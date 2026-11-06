@@ -12,6 +12,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Asset, AssetTransaction, ConsumableItem, Employee } from '../types/inventory.js';
+import { downloadCsv, toCsv } from '../utils/download.js';
 
 interface ReportsViewProps {
   assets: Asset[];
@@ -29,63 +30,55 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [selectedReportType, setSelectedReportType] = useState<
     'all' | 'valuation' | 'by-employee' | 'returns' | 'missing' | 'consumables'
   >('all');
-  const [filterOffice, setFilterOffice] = useState('all');
 
   // Valuation calculation
-  const totalValuation = assets.reduce((acc, a) => acc + (a.purchaseCost || 0), 0);
+  // Book value counts assets still owned (not retired, archived or lost).
+  const totalValuation = assets
+    .filter(a => !['Retired', 'Archived', 'Lost'].includes(a.status))
+    .reduce((acc, a) => acc + (a.purchaseCost || 0), 0);
   const consumableValuation = consumables.reduce((acc, c) => acc + (c.currentStock * c.unitCost), 0);
+
+  const missingAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost');
+  const valuationAssets = [...assets].sort((a, b) => (b.purchaseCost || 0) - (a.purchaseCost || 0));
+  const tableAssets = selectedReportType === 'missing' ? missingAssets : selectedReportType === 'valuation' ? valuationAssets : assets;
+  const holderOf = (a: Asset) => (a.status === 'Issued' ? a.assignedTo : (a.status === 'Missing' || a.status === 'Lost') && a.assignedTo ? `Last: ${a.assignedTo}` : '');
 
   const handleExportCSV = () => {
     let headers: string[] = [];
-    let rows: string[][] = [];
-    let filename = `WANG_Report_${selectedReportType}_${new Date().toISOString().split('T')[0]}.csv`;
+    let rows: unknown[][] = [];
+    const filename = `WANG_Report_${selectedReportType}_${new Date().toISOString().split('T')[0]}.csv`;
 
     if (selectedReportType === 'all' || selectedReportType === 'valuation') {
-      headers = ['Asset ID', 'Item Name', 'Category', 'Brand', 'Model', 'Serial', 'Office', 'Status', 'Condition', 'Custodian', 'Cost'];
-      rows = assets.map(a => [
-        `"${a.assetId}"`, `"${a.itemName}"`, `"${a.categoryName}"`, `"${a.brand}"`, `"${a.model}"`,
-        `"${a.serialNumber}"`, `"${a.officeBranch}"`, `"${a.status}"`, `"${a.condition}"`,
-        `"${a.assignedTo}"`, a.purchaseCost.toString()
+      headers = ['Asset ID', 'Item Name', 'Category', 'Brand', 'Model', 'Serial', 'City / Branch', 'Building - Room', 'Status', 'Condition', 'Custodian', 'Purchase Date', 'Cost (PKR)'];
+      rows = (selectedReportType === 'valuation' ? valuationAssets : assets).map(a => [
+        a.assetId, a.itemName, a.categoryName, a.brand, a.model, a.serialNumber, a.officeBranch, a.buildingRoom,
+        a.status, a.condition, a.status === 'Issued' ? a.assignedTo : '', a.purchaseDate, a.purchaseCost || 0
       ]);
     } else if (selectedReportType === 'by-employee') {
-      headers = ['Employee ID', 'Full Name', 'Department', 'Designation', 'Assigned Asset Count', 'Email', 'Office'];
-      rows = employees.map(e => [
-        `"${e.employeeId}"`, `"${e.fullName}"`, `"${e.department}"`, `"${e.designation}"`,
-        e.assignedAssetCount.toString(), `"${e.email}"`, `"${e.officeBranch}"`
-      ]);
+      headers = ['Employee ID', 'Full Name', 'Department', 'Designation', 'Assets Held', 'Asset IDs', 'Email', 'Station'];
+      rows = employees.map(e => {
+        const held = assets.filter(a => a.status === 'Issued' && a.assignedEmployeeId === e.employeeId);
+        return [e.employeeId, e.fullName, e.department, e.designation, held.length, held.map(a => a.assetId).join(' '), e.email, e.officeBranch];
+      });
     } else if (selectedReportType === 'returns') {
-      const returnTx = transactions.filter(t => t.transactionType === 'RETURN');
-      headers = ['Transaction ID', 'Asset ID', 'Item Name', 'Returned By', 'Timestamp', 'Return Condition', 'Audited By', 'Notes'];
-      rows = returnTx.map(t => [
-        `"${t.transactionId}"`, `"${t.assetId}"`, `"${t.assetName}"`, `"${t.employeeName}"`,
-        `"${t.timestamp}"`, `"${t.condition}"`, `"${t.performedByName}"`, `"${t.notes}"`
+      headers = ['Transaction ID', 'Asset ID', 'Item Name', 'Returned By', 'Date', 'Return Condition', 'Received By', 'Notes'];
+      rows = transactions.filter(t => t.transactionType === 'RETURN').map(t => [
+        t.transactionId, t.assetId, t.assetName, t.employeeName, t.timestamp, t.condition, t.performedByName, t.notes
       ]);
     } else if (selectedReportType === 'missing') {
-      const missingAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost');
-      headers = ['Asset ID', 'Item Name', 'Status', 'Location', 'Last Known Custodian', 'Cost', 'Remarks'];
-      rows = missingAssets.map(a => [
-        `"${a.assetId}"`, `"${a.itemName}"`, `"${a.status}"`, `"${a.officeBranch}"`,
-        `"${a.assignedTo}"`, a.purchaseCost.toString(), `"${a.remarks}"`
-      ]);
+      headers = ['Asset ID', 'Item Name', 'Status', 'City / Branch', 'Last Known Location', 'Last Known Custodian', 'Cost (PKR)', 'Remarks'];
+      rows = missingAssets.map(a => [a.assetId, a.itemName, a.status, a.officeBranch, a.buildingRoom, a.assignedTo, a.purchaseCost || 0, a.remarks]);
     } else if (selectedReportType === 'consumables') {
-      headers = ['Item Code', 'Item Name', 'Category', 'Unit', 'Stock Qty', 'Threshold', 'Unit Cost', 'Total Valuation'];
-      rows = consumables.map(c => [
-        `"${c.itemCode}"`, `"${c.itemName}"`, `"${c.category}"`, `"${c.unit}"`,
-        c.currentStock.toString(), c.minimumThreshold.toString(), c.unitCost.toString(),
-        (c.currentStock * c.unitCost).toFixed(2)
-      ]);
+      headers = ['Item Code', 'Item Name', 'Category', 'Unit', 'Stock Qty', 'Threshold', 'Unit Cost (PKR)', 'Total Value (PKR)'];
+      rows = consumables.map(c => [c.itemCode, c.itemName, c.category, c.unit, c.currentStock, c.minimumThreshold, c.unitCost, c.currentStock * c.unitCost]);
     }
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (rows.length === 0) {
+      alert('There is no data in this report to export.');
+      return;
+    }
+    downloadCsv(toCsv([headers, ...rows]), filename);
   };
-
   return (
     <div className="space-y-6">
       {/* View Header */}
@@ -127,7 +120,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <span className="text-2xl font-bold font-mono text-slate-900 mt-1 block">
             PKR {totalValuation.toLocaleString()}
           </span>
-          <span className="text-[11px] text-slate-400 mt-0.5 block">{assets.length} capitalized assets</span>
+          <span className="text-[11px] text-slate-400 mt-0.5 block">{assets.filter(a => !['Retired', 'Archived', 'Lost'].includes(a.status)).length} assets in service (excl. retired/lost)</span>
         </div>
 
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
@@ -236,7 +229,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     <td className="py-3 px-4 font-semibold text-slate-900">{e.fullName}</td>
                     <td className="py-3 px-4 text-slate-600">{e.department}</td>
                     <td className="py-3 px-4 text-slate-600">{e.officeBranch}</td>
-                    <td className="py-3 px-4 font-mono font-bold text-emerald-700">{e.assignedAssetCount} asset(s)</td>
+                    <td className="py-3 px-4 font-mono font-bold text-emerald-700">{assets.filter(a => a.status === 'Issued' && a.assignedEmployeeId === e.employeeId).length} asset(s)</td>
                     <td className="py-3 px-4 text-slate-600">{e.email}</td>
                     <td className="py-3 px-4 text-right font-mono text-slate-400">—</td>
                   </tr>
@@ -254,7 +247,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </tr>
                 ))
               ) : (
-                assets.map(a => (
+                tableAssets.map(a => (
                   <tr key={a.assetId} className="hover:bg-slate-50">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{a.assetId}</td>
                     <td className="py-3 px-4 font-semibold text-slate-900">{a.itemName}</td>
@@ -263,7 +256,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     <td className="py-3 px-4">
                       <span className="font-semibold text-slate-800">{a.status}</span>
                     </td>
-                    <td className="py-3 px-4 text-slate-700">{a.assignedTo || 'Unassigned'}</td>
+                    <td className="py-3 px-4 text-slate-700">{holderOf(a) || 'In store'}</td>
                     <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">PKR {a.purchaseCost?.toLocaleString() ?? 0}</td>
                   </tr>
                 ))

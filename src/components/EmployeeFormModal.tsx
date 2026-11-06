@@ -24,7 +24,8 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
   onSuccess
 }) => {
   const isEditing = !!employeeToEdit;
-  const isExecutiveDirector = employeeToEdit?.employeeId === 'EMP-001';
+  // Role changes are restricted to Super Admins (enforced again in the data layer).
+  const isExecutiveDirector = false;
 
   // Default initial location from registered locations if available
   const defaultLoc = locations.length > 0
@@ -68,7 +69,8 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
       setActiveStatus(true);
       setError(null);
     }
-  }, [employeeToEdit, isOpen, defaultLoc]);
+    // Reset only when opened or a different employee is loaded, not on live data updates.
+  }, [employeeToEdit?.employeeId, isOpen]);
 
   if (!isOpen) return null;
 
@@ -87,12 +89,8 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
 
   const generateNextId = async () => {
     try {
-      const emps = await api.getEmployees();
-      const highestNum = emps.reduce((max, e) => {
-        const match = e.employeeId.match(/\d+/);
-        return match ? Math.max(max, parseInt(match[0], 10)) : max;
-      }, 0);
-      setEmployeeId(`EMP-${String(highestNum + 1).padStart(3, '0')}`);
+      await api.getEmployees();
+      setEmployeeId(api.suggestEmployeeId());
     } catch {
       setEmployeeId(`EMP-${Math.floor(100 + Math.random() * 900)}`);
     }
@@ -115,7 +113,7 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
       email: email.trim(),
       phone: phone.trim(),
       officeBranch,
-      role: isExecutiveDirector ? 'Super Admin' : role,
+      role,
       activeStatus
     };
 
@@ -389,6 +387,34 @@ export const EmployeeFormModal: React.FC<EmployeeFormModalProps> = ({
                   </p>
                 </div>
               </label>
+
+              {/* Role 5 & 6: Approver / Auditor */}
+              {(['Approver', 'Auditor'] as UserRole[]).map((r) => (
+                <label
+                  key={r}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all flex items-start gap-2.5 ${
+                    role === r ? 'bg-emerald-50 border-emerald-600 ring-2 ring-emerald-600 shadow-xs' : 'bg-white border-slate-200 hover:bg-slate-100/70'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="systemRole"
+                    value={r}
+                    checked={role === r}
+                    disabled={isExecutiveDirector || currentUserRole !== 'Super Admin'}
+                    onChange={() => handleRoleSelect(r)}
+                    className="mt-0.5 text-[#003279]"
+                  />
+                  <div>
+                    <div className="font-bold text-xs text-slate-900">{r === 'Approver' ? '✅ Approver' : '🔍 Auditor'}</div>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                      {r === 'Approver'
+                        ? 'Approves or rejects asset & supply requests. No stock changes.'
+                        : 'Read-only access to all registers, audits, reports and the activity log.'}
+                    </p>
+                  </div>
+                </label>
+              ))}
             </div>
           </div>
 

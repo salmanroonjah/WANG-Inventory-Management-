@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Asset, AssetTransaction } from '../types/inventory.js';
 import { api } from '../services/api.js';
@@ -20,6 +20,15 @@ export const ReportMissingModal: React.FC<ReportMissingModalProps> = ({
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && asset) {
+      // A Missing asset can only be escalated to Lost.
+      setStatus(asset.status === 'Missing' ? 'Lost' : 'Missing');
+      setReason('');
+      setError(null);
+    }
+  }, [isOpen, asset?.assetId]);
 
   if (!isOpen || !asset) return null;
 
@@ -95,6 +104,7 @@ export const ReportMissingModal: React.FC<ReportMissingModalProps> = ({
                     type="radio"
                     name="statusType"
                     checked={status === 'Missing'}
+                    disabled={asset.status === 'Missing'}
                     onChange={() => setStatus('Missing')}
                   />
                   <span className="font-bold">Missing</span>

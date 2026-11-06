@@ -59,6 +59,8 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
   const [description, setDescription] = useState('');
   const [isStore, setIsStore] = useState(false);
 
+  // The room title as stored; reused unchanged unless the number/name fields are edited.
+  const [originalRoom, setOriginalRoom] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,14 +81,11 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
 
       // Parse room number vs room name if formatted as "Room No 1: WANG Office"
       const rawRoom = locationToEdit.room || '';
+      setOriginalRoom(rawRoom);
       if (rawRoom.includes(':')) {
         const parts = rawRoom.split(':');
         setRoomNumber(parts[0].trim());
         setRoomName(parts.slice(1).join(':').trim());
-      } else if (rawRoom.includes(' - ')) {
-        const parts = rawRoom.split(' - ');
-        setRoomNumber(parts[0].trim());
-        setRoomName(parts.slice(1).join(' - ').trim());
       } else {
         setRoomNumber('');
         setRoomName(rawRoom);
@@ -158,6 +157,12 @@ export const LocationFormModal: React.FC<LocationFormModalProps> = ({
       fullRoomTitle = roomNumber.trim();
     } else {
       fullRoomTitle = roomName.trim();
+    }
+    if (isEditingRoom && originalRoom) {
+      const i = originalRoom.indexOf(':');
+      const oNum = i >= 0 ? originalRoom.slice(0, i).trim() : '';
+      const oName = i >= 0 ? originalRoom.slice(i + 1).trim() : originalRoom.trim();
+      if (oNum === roomNumber.trim() && oName === roomName.trim()) fullRoomTitle = originalRoom;
     }
 
     setIsSubmitting(true);

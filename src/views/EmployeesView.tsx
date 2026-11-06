@@ -37,6 +37,7 @@ import { api } from '../services/api.js';
 interface EmployeesViewProps {
   employees: Employee[];
   allAssets: Asset[];
+  transactions?: AssetTransaction[];
   locations?: LocationRecord[];
   userRole: UserRole;
   currentUser: UserSession;
@@ -51,6 +52,7 @@ interface EmployeesViewProps {
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
   employees,
   allAssets,
+  transactions = [],
   locations = [],
   userRole,
   currentUser,
@@ -83,13 +85,18 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Detail view state
-  const [employeeDetails, setEmployeeDetails] = useState<{
-    employee: Employee;
-    assignedAssets: Asset[];
-    history: AssetTransaction[];
-  } | null>(null);
-  const [loadingDetails, setLoadingDetails] = useState(false);
+  // Detail view is derived from live data so it updates right after issue/return/edit.
+  const employeeDetails = useMemo(() => {
+    if (!selectedEmpId) return null;
+    const employee = employees.find(e => e.employeeId === selectedEmpId);
+    if (!employee) return null;
+    return {
+      employee,
+      assignedAssets: allAssets.filter(a => a.status === 'Issued' && a.assignedEmployeeId === selectedEmpId),
+      history: transactions.filter(t => t.employeeId === selectedEmpId)
+    };
+  }, [selectedEmpId, employees, allAssets, transactions]);
+  const loadingDetails = false;
 
   // Departments list
   const departments = useMemo(() => {
@@ -98,23 +105,21 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
 
   // Executive Director profile (EMP-001 or designation contains Executive Director)
   const executiveDirector = useMemo(() => {
-    return employees.find(e => e.employeeId === 'EMP-001') ||
-      employees.find(e => e.designation.toLowerCase().includes('executive director')) ||
-      employees.find(e => e.role === 'Super Admin') ||
-      employees[0];
-  }, [employees]);
+    // The signed-in user's own staff record (used for "My Profile").
+    return employees.find(e => e.employeeId === currentUser.employeeId);
+  }, [employees, currentUser.employeeId]);
 
   // The 3 Key Admins
   const superAdminUser = useMemo(() => {
-    return employees.find(e => e.role === 'Super Admin' || e.employeeId === 'EMP-001');
+    return employees.find(e => e.role === 'Super Admin');
   }, [employees]);
 
   const inventoryAdminUser = useMemo(() => {
-    return employees.find(e => e.role === 'Inventory & Finance Admin' || (e.role as any) === 'Inventory Manager' || e.employeeId === 'EMP-002');
+    return employees.find(e => e.role === 'Inventory & Finance Admin' || (e.role as any) === 'Inventory Manager');
   }, [employees]);
 
   const itAdminUser = useMemo(() => {
-    return employees.find(e => e.role === 'IT Administrator' || e.employeeId === 'EMP-004');
+    return employees.find(e => e.role === 'IT Administrator');
   }, [employees]);
 
   // Role Counts
@@ -134,8 +139,8 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       const matchesSearch = !q || 
         emp.fullName.toLowerCase().includes(q) ||
         emp.employeeId.toLowerCase().includes(q) ||
-        emp.designation.toLowerCase().includes(q) ||
-        emp.email.toLowerCase().includes(q) ||
+        (emp.designation || '').toLowerCase().includes(q) ||
+        (emp.email || '').toLowerCase().includes(q) ||
         (emp.phone && emp.phone.includes(q));
 
       const matchesDept = selectedDept === 'all' || emp.department === selectedDept;
@@ -157,22 +162,12 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     });
   }, [employees, search, selectedDept, selectedRoleFilter]);
 
-  const handleSelectEmployee = async (empId: string) => {
+  const handleSelectEmployee = (empId: string) => {
     setSelectedEmpId(empId);
-    setLoadingDetails(true);
-    try {
-      const data = await api.getEmployeeById(empId);
-      setEmployeeDetails(data);
-    } catch (err) {
-      console.error('Failed to load employee details', err);
-    } finally {
-      setLoadingDetails(false);
-    }
   };
 
   const handleBackToList = () => {
     setSelectedEmpId(null);
-    setEmployeeDetails(null);
   };
 
   const handleConfirmDelete = async () => {
@@ -236,6 +231,14 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
             IT Administrator
           </span>
         );
+      case 'Approver':
+      case 'Auditor':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-700 text-white shadow-xs border border-emerald-800">
+            <Shield className="w-3 h-3 text-emerald-200" />
+            {role}
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
@@ -292,7 +295,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 className="px-4 py-2 bg-[#f1cc11] hover:bg-[#ddba09] text-[#003279] rounded-lg text-xs font-black flex items-center gap-2 transition-all shadow-sm"
               >
                 <Edit className="w-4 h-4 text-[#003279]" />
-                <span>Edit Executive Profile</span>
+                <span>Edit My Profile</span>
               </button>
             )}
 
@@ -333,25 +336,27 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </div>
                 <div className="flex-1 min-w-0 pr-12">
                   <h3 className="font-bold text-slate-900 text-sm truncate">
-                    {executiveDirector?.fullName || 'Dr. Salman Khan'}
+                    {superAdminUser?.fullName || 'Not assigned'}
                   </h3>
                   <p className="text-xs font-semibold text-[#003279]">
-                    {executiveDirector?.designation || 'Executive Director'}
+                    {superAdminUser?.designation || 'Super Admin'}
                   </p>
                   <p className="text-[11px] text-slate-500 font-mono mt-1">
-                    {executiveDirector?.employeeId || 'EMP-001'} · {executiveDirector?.department || 'Executive Management'}
+                    {superAdminUser ? `${superAdminUser.employeeId} · ${superAdminUser.department}` : 'Assign via Employees list'}
                   </p>
                 </div>
               </div>
               <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                 <span className="text-[11px] text-slate-500 font-medium">Full Governance & Role Delegation</span>
+                {superAdminUser && (isSuperAdmin || superAdminUser.employeeId === currentUser.employeeId) && (
                 <button
-                  onClick={() => setIsProfileModalOpen(true)}
+                  onClick={() => superAdminUser.employeeId === currentUser.employeeId ? setIsProfileModalOpen(true) : setEmployeeToEdit(superAdminUser)}
                   className="text-xs font-bold text-[#003279] hover:underline flex items-center gap-1"
                 >
                   <Edit className="w-3 h-3" />
                   <span>Edit</span>
                 </button>
+                )}
               </div>
             </div>
 
@@ -366,19 +371,19 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </div>
                 <div className="flex-1 min-w-0 pr-16">
                   <h3 className="font-bold text-slate-900 text-sm truncate">
-                    {inventoryAdminUser?.fullName || 'Ayesha Noor'}
+                    {inventoryAdminUser?.fullName || 'Not assigned'}
                   </h3>
                   <p className="text-xs font-semibold text-[#003279]">
                     {inventoryAdminUser?.designation || 'Manager Admin & Finance'}
                   </p>
                   <p className="text-[11px] text-slate-500 font-mono mt-1">
-                    {inventoryAdminUser?.employeeId || 'EMP-002'} · {inventoryAdminUser?.department || 'Admin & Finance'}
+                    {inventoryAdminUser ? `${inventoryAdminUser.employeeId} · ${inventoryAdminUser.department}` : 'Assign via Employees list'}
                   </p>
                 </div>
               </div>
               <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                 <span className="text-[11px] text-slate-500 font-medium">Asset Register, Issuance & Audits</span>
-                {inventoryAdminUser && (
+                {inventoryAdminUser && canManage && (
                   <button
                     onClick={() => setEmployeeToEdit(inventoryAdminUser)}
                     className="text-xs font-bold text-[#003279] hover:underline flex items-center gap-1"
@@ -401,19 +406,19 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </div>
                 <div className="flex-1 min-w-0 pr-14">
                   <h3 className="font-bold text-slate-900 text-sm truncate">
-                    {itAdminUser?.fullName || 'Fatima Zahra'}
+                    {itAdminUser?.fullName || 'Not assigned'}
                   </h3>
                   <p className="text-xs font-semibold text-indigo-900">
                     {itAdminUser?.designation || 'IT Systems Administrator'}
                   </p>
                   <p className="text-[11px] text-slate-500 font-mono mt-1">
-                    {itAdminUser?.employeeId || 'EMP-004'} · {itAdminUser?.department || 'IT Department'}
+                    {itAdminUser ? `${itAdminUser.employeeId} · ${itAdminUser.department}` : 'Assign via Employees list'}
                   </p>
                 </div>
               </div>
               <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                 <span className="text-[11px] text-slate-500 font-medium">IT Infrastructure & Hardware Logs</span>
-                {itAdminUser && (
+                {itAdminUser && canManage && (
                   <button
                     onClick={() => setEmployeeToEdit(itAdminUser)}
                     className="text-xs font-bold text-indigo-900 hover:underline flex items-center gap-1"
@@ -523,13 +528,17 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                   <span>Edit Profile & Roles</span>
                 </button>
 
-                <button
-                  onClick={() => onOpenIssueForEmployee(employeeDetails.employee.employeeId)}
-                  className="px-3.5 py-1.5 bg-[#003279] hover:bg-[#002254] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
-                >
-                  <Send className="w-3.5 h-3.5 text-[#f1cc11]" />
-                  <span>Issue New Asset</span>
-                </button>
+                {employeeDetails.employee.activeStatus ? (
+                  <button
+                    onClick={() => onOpenIssueForEmployee(employeeDetails.employee.employeeId)}
+                    className="px-3.5 py-1.5 bg-[#003279] hover:bg-[#002254] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Send className="w-3.5 h-3.5 text-[#f1cc11]" />
+                    <span>Issue New Asset</span>
+                  </button>
+                ) : (
+                  <span className="px-3 py-1.5 text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg">Inactive — cannot receive assets</span>
+                )}
               </div>
             )}
           </div>
@@ -614,7 +623,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
             ) : (
               <div className="divide-y divide-slate-200">
                 {employeeDetails.assignedAssets.map((asset) => {
-                  const isOverdue = asset.dueDate && new Date(asset.dueDate) < new Date();
+                  const isOverdue = !!asset.dueDate && asset.dueDate < new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
                   return (
                     <div key={asset.assetId} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50">
                       <div className="flex items-start gap-3">
@@ -754,7 +763,8 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           {/* Directory Grid / Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredEmployees.map((emp) => {
-              const isExec = emp.employeeId === 'EMP-001' || emp.designation.toLowerCase().includes('executive director');
+              // Your own record: edited via My Profile; you cannot delete yourself or change your own role here.
+              const isExec = !!currentUser.employeeId && emp.employeeId === currentUser.employeeId;
 
               return (
                 <div
@@ -849,7 +859,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                                 setEmployeeToEdit(emp);
                               }
                             }}
-                            title={isExec ? "Edit Executive Profile" : "Edit Profile & Role"}
+                            title={isExec ? "Edit My Profile" : "Edit Profile & Role"}
                             className="p-1.5 text-slate-600 hover:text-[#003279] hover:bg-slate-100 rounded-lg transition-colors"
                           >
                             <Edit className="w-3.5 h-3.5" />
@@ -863,6 +873,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               setEmployeeToDelete(emp);
+                              setDeleteError(null);
                             }}
                             title="Remove Employee"
                             className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
@@ -904,7 +915,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           existingDepartments={departments}
           onSuccess={() => {
             if (onRefreshData) onRefreshData();
-            if (selectedEmpId) handleSelectEmployee(selectedEmpId);
           }}
         />
       )}

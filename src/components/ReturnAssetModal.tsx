@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, RotateCcw, AlertCircle, Wrench, CheckCircle2, UserCheck } from 'lucide-react';
 import { Asset, AssetCondition, AssetTransaction, LocationRecord } from '../types/inventory.js';
-import { api } from '../services/api.js';
+import { api, defaultStoreLocation } from '../services/api.js';
 import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface ReturnAssetModalProps {
@@ -20,7 +20,7 @@ export const ReturnAssetModal: React.FC<ReturnAssetModalProps> = ({
   onSuccess
 }) => {
   const [returnCondition, setReturnCondition] = useState<AssetCondition>('Good');
-  const [targetLocation, setTargetLocation] = useState('Central Store - Bay A');
+  const [targetLocation, setTargetLocation] = useState(() => defaultStoreLocation(locations));
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,11 +29,12 @@ export const ReturnAssetModal: React.FC<ReturnAssetModalProps> = ({
   useEffect(() => {
     if (asset) {
       setReturnCondition(asset.condition || 'Good');
-      setTargetLocation('Central Store - Bay A');
+      setTargetLocation(defaultStoreLocation(locations, asset?.buildingRoom || ''));
+      setNotes('');
       setError(null);
       setShowConfirm(false);
     }
-  }, [asset]);
+  }, [asset?.assetId, isOpen]);
 
   if (!isOpen || !asset) return null;
 
@@ -160,7 +161,9 @@ export const ReturnAssetModal: React.FC<ReturnAssetModalProps> = ({
                 onChange={(e) => setReturnCondition(e.target.value as AssetCondition)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"
               >
+                <option value="New">New / Like-New</option>
                 <option value="Good">Good — Normal condition, ready for reissuance</option>
+                <option value="Fair">Fair — Usable, minor cosmetic wear</option>
                 <option value="Minor Wear">Minor Wear — Working fine, cosmetic wear only</option>
                 <option value="Needs Repair">Needs Repair — Faulty or impaired, requires service</option>
                 <option value="Damaged">Damaged — Physical damage, requires technician overhaul</option>

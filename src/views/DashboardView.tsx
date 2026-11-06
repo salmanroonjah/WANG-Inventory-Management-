@@ -14,11 +14,12 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { DashboardStats, UserRole, ViewTab } from '../types/inventory.js';
+import { isTabAllowed } from '../components/Sidebar.js';
 import wangLogo from '../assets/wang_logo.png';
 
 interface DashboardViewProps {
   stats: DashboardStats;
-  onNavigate: (tab: any) => void;
+  onNavigate: (tab: ViewTab, opts?: { missingTab?: 'missing' | 'overdue' }) => void;
   onOpenScanner: () => void;
   userRole: UserRole;
 }
@@ -29,6 +30,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenScanner,
   userRole
 }) => {
+  // Cards only navigate to screens this role can open.
+  const go = (tab: ViewTab, opts?: { missingTab?: 'missing' | 'overdue' }) => {
+    if (isTabAllowed(tab, userRole)) onNavigate(tab, opts);
+  };
+
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
@@ -62,8 +68,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Scan Barcode Label
             </button>
 
+            {isTabAllowed('issue', userRole) && (<>
             <button
-              onClick={() => onNavigate('issue')}
+              onClick={() => go('issue')}
               className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20 cursor-pointer"
             >
               <Send className="w-4 h-4 text-[#f1cc11]" />
@@ -71,15 +78,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
 
             <button
-              onClick={() => onNavigate('return')}
+              onClick={() => go('return')}
               className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4 text-white" />
               Return Asset
             </button>
+            </>)}
 
             <button
-              onClick={() => onNavigate('inventory')}
+              onClick={() => go('inventory')}
               className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors border border-white/20 cursor-pointer"
             >
               <Boxes className="w-4 h-4 text-[#f1cc11]" />
@@ -93,7 +101,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         {/* Total Assets */}
         <div 
-          onClick={() => onNavigate('inventory')}
+          onClick={() => go('inventory')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-slate-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -108,7 +116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Available in Store */}
         <div 
-          onClick={() => onNavigate('inventory')}
+          onClick={() => go('inventory')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-emerald-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -123,7 +131,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Currently Issued */}
         <div 
-          onClick={() => onNavigate('inventory')}
+          onClick={() => go('inventory')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-blue-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -138,7 +146,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Under Maintenance */}
         <div 
-          onClick={() => onNavigate('maintenance')}
+          onClick={() => go('maintenance')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -153,7 +161,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Missing or Lost */}
         <div 
-          onClick={() => onNavigate('missing-lost')}
+          onClick={() => go('missing-lost', { missingTab: 'missing' })}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-rose-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -168,7 +176,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Overdue Returns */}
         <div 
-          onClick={() => onNavigate('missing-lost')}
+          onClick={() => go('missing-lost', { missingTab: 'overdue' })}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 transition-all"
         >
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
@@ -191,7 +199,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Asset Category Distribution
             </h3>
             <button
-              onClick={() => onNavigate('categories')}
+              onClick={() => go('categories')}
               className="text-xs text-emerald-700 font-semibold hover:underline flex items-center gap-1"
             >
               View All <ArrowRight className="w-3 h-3" />
@@ -234,7 +242,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Consumable Stock
               </h3>
               <button
-                onClick={() => onNavigate('consumables')}
+                onClick={() => go('consumables')}
                 className="text-xs text-emerald-700 font-semibold hover:underline flex items-center gap-1"
               >
                 Manage <ArrowRight className="w-3 h-3" />
@@ -259,7 +267,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <button
-            onClick={() => onNavigate('consumables')}
+            onClick={() => go('consumables')}
             className="w-full mt-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors"
           >
             Review Consumables Ledger
@@ -279,7 +287,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
           <button
-            onClick={() => onNavigate('activity')}
+            onClick={() => go('activity')}
             className="text-xs text-emerald-700 font-semibold hover:underline flex items-center gap-1"
           >
             View Full Audit Trail <ArrowRight className="w-3 h-3" />

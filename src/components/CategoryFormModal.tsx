@@ -113,8 +113,11 @@ export const CategoryFormModal: React.FC<CategoryFormModalProps> = ({
 
     try {
       if (isEditing && categoryToEdit) {
+        // Only change the code when the user actually edited it (protects legacy IDs).
+        const originalCode = categoryToEdit.categoryId.replace(/^CAT-/, '') || 'GEN';
+        const codeChanged = categoryCodeInput.trim().toUpperCase().replace(/^CAT-/, '') !== originalCode.toUpperCase();
         await api.updateCategory(categoryToEdit.categoryId, {
-          categoryId: finalFullCategoryId,
+          categoryId: codeChanged ? finalFullCategoryId : undefined,
           categoryName: categoryName.trim(),
           description: description.trim(),
           iconName: selectedIcon

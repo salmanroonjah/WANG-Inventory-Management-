@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { LocationRecord, Asset } from '../types/inventory.js';
 import { LocationFormModal } from '../components/LocationFormModal.js';
-import { api } from '../services/api.js';
+import { api, assetInLocation, locationLabel } from '../services/api.js';
 
 interface LocationsViewProps {
   locations: LocationRecord[];
@@ -79,13 +79,10 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
   // Compute live asset counts for each location room
   const locationsWithLiveCount = useMemo(() => {
     return locations.map(loc => {
-      const matchCount = allAssets.filter(a => 
-        a.officeBranch?.toLowerCase() === loc.officeBranch?.toLowerCase() &&
-        (a.buildingRoom?.toLowerCase().includes(loc.room?.toLowerCase()) || loc.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
-      ).length;
+      const matchCount = allAssets.filter(a => assetInLocation(a, loc)).length;
       return {
         ...loc,
-        liveAssetCount: Math.max(matchCount, loc.assetCount || 0)
+        liveAssetCount: matchCount
       };
     });
   }, [locations, allAssets]);
@@ -177,10 +174,7 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
   // Assets belonging to preview Location Room
   const previewRoomAssets = useMemo(() => {
     if (!previewLocation) return [];
-    return allAssets.filter(a => 
-      a.officeBranch?.toLowerCase() === previewLocation.officeBranch?.toLowerCase() &&
-      (a.buildingRoom?.toLowerCase().includes(previewLocation.room?.toLowerCase()) || previewLocation.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
-    );
+    return allAssets.filter(a => assetInLocation(a, previewLocation));
   }, [allAssets, previewLocation]);
 
   // Handlers
@@ -806,9 +800,9 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
                   <span>Assets Located in this Room ({previewRoomAssets.length})</span>
                   <button
                     onClick={() => {
-                      const branch = previewLocation.officeBranch;
+                      const label = locationLabel(previewLocation);
                       setPreviewLocation(null);
-                      onSelectLocation(branch);
+                      onSelectLocation(label);
                     }}
                     className="text-xs text-[#003279] font-bold hover:underline flex items-center gap-1 cursor-pointer"
                   >
@@ -876,10 +870,7 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
             </p>
 
             {(() => {
-              const count = allAssets.filter(a => 
-                a.officeBranch?.toLowerCase() === deletingLocation.officeBranch?.toLowerCase() &&
-                (a.buildingRoom?.toLowerCase().includes(deletingLocation.room?.toLowerCase()) || deletingLocation.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
-              ).length;
+              const count = allAssets.filter(a => assetInLocation(a, deletingLocation)).length;
               if (count > 0) {
                 return (
                   <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-start gap-2">
@@ -913,10 +904,7 @@ export const LocationsView: React.FC<LocationsViewProps> = ({
               <button
                 type="button"
                 onClick={handleDeleteConfirm}
-                disabled={isDeleting || allAssets.some(a => 
-                  a.officeBranch?.toLowerCase() === deletingLocation.officeBranch?.toLowerCase() &&
-                  (a.buildingRoom?.toLowerCase().includes(deletingLocation.room?.toLowerCase()) || deletingLocation.room?.toLowerCase().includes(a.buildingRoom?.toLowerCase()))
-                )}
+                disabled={isDeleting || allAssets.some(a => assetInLocation(a, deletingLocation))}
                 className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 {isDeleting ? (

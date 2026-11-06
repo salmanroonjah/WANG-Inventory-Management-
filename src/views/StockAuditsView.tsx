@@ -11,74 +11,107 @@ import {
   User,
   X
 } from 'lucide-react';
-import { PhysicalAudit, AssetCondition } from '../types/inventory.js';
+import { PhysicalAudit, AssetCondition, LocationRecord } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
 import { api } from '../services/api.js';
 
 interface StockAuditsViewProps {
   audits: PhysicalAudit[];
-  onOpenScanner: () => void;
+  locations: LocationRecord[];
+  onOpenScanner: (callback: (assetId: string) => void) => void;
   onRefresh: () => void;
   canManage: boolean;
 }
 
 export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
   audits,
+  locations,
   onOpenScanner,
   onRefresh,
   canManage
 }) => {
-  const [selectedAudit, setSelectedAudit] = useState<PhysicalAudit | null>(audits[0] || null);
+  // Track the selection by ID so the view always shows the live audit record.
+  const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null);
+  const selectedAudit = audits.find((a) => a.auditId === selectedAuditId) || audits[0] || null;
+  const setSelectedAudit = (a: PhysicalAudit | null) => setSelectedAuditId(a ? a.auditId : null);
+
+  const branches = Array.from(new Set(locations.map((l) => l.officeBranch).filter(Boolean))).sort();
   const [isStartingNew, setIsStartingNew] = useState(false);
   const [newAuditName, setNewAuditName] = useState('');
-  const [newAuditBranch, setNewAuditBranch] = useState('Head Office - Islamabad');
+  const [newAuditBranch, setNewAuditBranch] = useState('All Branches');
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   // Fast scan input in active audit
   const [scanAssetIdInput, setScanAssetIdInput] = useState('');
   const [scanCondition, setScanCondition] = useState<AssetCondition>('Good');
   const [scanNotes, setScanNotes] = useState('');
   const [isRecordingScan, setIsRecordingScan] = useState(false);
-  const [scanResultMsg, setScanResultMsg] = useState<string | null>(null);
+  const [scanResultMsg, setScanResultMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
 
   const handleStartAudit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAuditName.trim()) return;
-
+    setIsStarting(true);
+    setStartError(null);
     try {
       const created = await api.startAudit(newAuditName.trim(), newAuditBranch, 'All Categories');
       setIsStartingNew(false);
       setNewAuditName('');
       setSelectedAudit(created);
       onRefresh();
-    } catch (err) {
-      console.error('Failed to start audit', err);
+    } catch (err: any) {
+      setStartError(err?.message || 'Failed to start audit.');
+    } finally {
+      setIsStarting(false);
     }
   };
 
-  const handleAuditScanSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedAudit || !scanAssetIdInput.trim()) return;
-
+  const recordScan = async (rawId: string) => {
+    if (!selectedAudit || !rawId.trim()) return;
+    const id = rawId.trim().toUpperCase();
     setIsRecordingScan(true);
     setScanResultMsg(null);
-
     try {
-      const updatedAudit = await api.scanAuditItem(
-        selectedAudit.auditId,
-        scanAssetIdInput.trim().toUpperCase(),
-        scanCondition,
-        scanNotes || undefined
-      );
-
-      setSelectedAudit(updatedAudit);
-      setScanResultMsg(`Asset ${scanAssetIdInput.trim().toUpperCase()} verified in audit!`);
+      const updated = await api.scanAuditItem(selectedAudit.auditId, id, scanCondition, scanNotes || undefined);
+      const item = updated.items.find((i) => i.assetId.toUpperCase() === id);
+      setScanResultMsg({
+        ok: !item?.isDiscrepancy,
+        text: item?.isDiscrepancy
+          ? `${id} recorded with a discrepancy${item.isUnexpected ? ' (not expected in this audit)' : ''}.`
+          : `${id} verified.`
+      });
       setScanAssetIdInput('');
       setScanNotes('');
       onRefresh();
     } catch (err: any) {
-      setScanResultMsg(err?.message || 'Error recording scan');
+      setScanResultMsg({ ok: false, text: err?.message || 'Error recording scan' });
     } finally {
       setIsRecordingScan(false);
+    }
+  };
+
+  const handleAuditScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    recordScan(scanAssetIdInput);
+  };
+
+  const handleCloseAudit = async (status: 'Approved' | 'Cancelled') => {
+    if (!selectedAudit) return;
+    const msg =
+      status === 'Approved'
+        ? `Finalize "${selectedAudit.auditName}"? ${selectedAudit.totalMissing} asset(s) were not found. No further scans will be accepted.`
+        : `Cancel "${selectedAudit.auditName}"? The results will be kept but marked cancelled.`;
+    if (!window.confirm(msg)) return;
+    setIsClosing(true);
+    try {
+      await api.finishAudit(selectedAudit.auditId, status);
+      onRefresh();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to close audit.');
+    } finally {
+      setIsClosing(false);
     }
   };
 
@@ -140,11 +173,19 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                   onChange={(e) => setNewAuditBranch(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
                 >
-                  <option value="Head Office - Islamabad">Head Office - Islamabad</option>
-                  <option value="Field Office - Quetta">Field Office - Quetta</option>
                   <option value="All Branches">All Organizational Branches</option>
+                  {branches.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
                 </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Every active asset in this scope is added to the checklist as "expected".
+                </p>
               </div>
+
+              {startError && (
+                <p className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-800">{startError}</p>
+              )}
 
               <div className="pt-2 flex items-center justify-between">
                 <button
@@ -156,9 +197,10 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-lg shadow-xs"
+                  disabled={isStarting}
+                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-semibold rounded-lg shadow-xs"
                 >
-                  Initialize Audit Batch
+                  {isStarting ? 'Starting…' : 'Initialize Audit Batch'}
                 </button>
               </div>
             </form>
@@ -225,12 +267,28 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                       <Camera className="w-4 h-4 text-emerald-700" />
                       Live Physical Verification Input
                     </span>
-                    <button
-                      onClick={onOpenScanner}
-                      className="text-xs text-emerald-800 underline font-semibold flex items-center gap-1"
-                    >
-                      Use Mobile Camera Scanner
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => onOpenScanner((id) => recordScan(id))}
+                        className="text-xs text-emerald-800 underline font-semibold flex items-center gap-1"
+                      >
+                        Use Mobile Camera Scanner
+                      </button>
+                      <button
+                        onClick={() => handleCloseAudit('Approved')}
+                        disabled={isClosing}
+                        className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[11px] font-semibold rounded"
+                      >
+                        Finalize Audit
+                      </button>
+                      <button
+                        onClick={() => handleCloseAudit('Cancelled')}
+                        disabled={isClosing}
+                        className="px-2.5 py-1 bg-white border border-slate-300 text-slate-700 text-[11px] font-semibold rounded"
+                      >
+                        Cancel Audit
+                      </button>
+                    </div>
                   </div>
 
                   <form onSubmit={handleAuditScanSubmit} className="flex flex-col sm:flex-row gap-2.5">
@@ -248,7 +306,9 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                       onChange={(e) => setScanCondition(e.target.value as any)}
                       className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
                     >
+                      <option value="New">New</option>
                       <option value="Good">Good Condition</option>
+                      <option value="Fair">Fair</option>
                       <option value="Minor Wear">Minor Wear</option>
                       <option value="Needs Repair">Needs Repair</option>
                       <option value="Damaged">Damaged</option>
@@ -265,8 +325,12 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                   </form>
 
                   {scanResultMsg && (
-                    <p className="text-xs text-emerald-900 font-medium mt-2 bg-white/70 p-2 rounded border border-emerald-200">
-                      {scanResultMsg}
+                    <p
+                      className={`text-xs font-medium mt-2 bg-white/70 p-2 rounded border ${
+                        scanResultMsg.ok ? 'text-emerald-900 border-emerald-200' : 'text-rose-800 border-rose-200'
+                      }`}
+                    >
+                      {scanResultMsg.text}
                     </p>
                   )}
                 </div>
@@ -304,11 +368,21 @@ export const StockAuditsView: React.FC<StockAuditsViewProps> = ({
                           </td>
                           <td className="py-3 px-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              item.isFound
+                              item.isFound && !item.isDiscrepancy
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-rose-100 text-rose-800'
+                                : item.isFound
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
                             }`}>
-                              {item.isFound ? 'Verified Present' : 'Not Verified Yet'}
+                              {item.isFound
+                                ? item.isUnexpected
+                                  ? 'Found (Unexpected)'
+                                  : item.isDiscrepancy
+                                    ? 'Found (Discrepancy)'
+                                    : 'Verified Present'
+                                : selectedAudit.status === 'In Progress'
+                                  ? 'Not Verified Yet'
+                                  : 'Not Found'}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-slate-700">{item.expectedLocation}</td>

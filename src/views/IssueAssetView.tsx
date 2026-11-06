@@ -25,6 +25,7 @@ interface IssueAssetViewProps {
   allAssets?: Asset[];
   locations?: LocationRecord[];
   initialAssetId?: string | null;
+  initialEmployeeId?: string | null;
   onIssueSuccess: (asset: Asset, transaction: AssetTransaction) => void;
   onPrintVoucher: (asset: Asset, transaction: AssetTransaction) => void;
   canManage: boolean;
@@ -36,6 +37,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   allAssets = [],
   locations = [],
   initialAssetId,
+  initialEmployeeId,
   onIssueSuccess,
   onPrintVoucher,
   canManage
@@ -62,6 +64,17 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [completedTx, setCompletedTx] = useState<{ asset: Asset; transaction: AssetTransaction } | null>(null);
 
+  useEffect(() => {
+    if (initialEmployeeId) setSelectedEmpId(initialEmployeeId);
+  }, [initialEmployeeId]);
+
+  // Keep the selected asset in step with live data (e.g. issued from another device).
+  useEffect(() => {
+    if (!asset) return;
+    const live = allAssets.find((a) => a.assetId === asset.assetId);
+    if (live && live !== asset && live.lastUpdated !== asset.lastUpdated) setAsset(live);
+  }, [allAssets]);
+
   // Filter available assets
   const availableAssets = useMemo(() => {
     return allAssets.filter(a => a.status === 'Available');
@@ -81,9 +94,8 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
       setAsset(res.asset);
       setCondition(res.asset.condition || 'Good');
       setLocation(res.asset.buildingRoom || '');
-      if (employees.length > 0 && !selectedEmpId) {
-        setSelectedEmpId(employees[0].employeeId);
-      }
+      setNotes('');
+      setDueDate('');
     } catch (err: any) {
       setAsset(null);
       setSearchError(err?.message || `No asset found with ID ${clean}`);
@@ -100,9 +112,8 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
     setSearchError(null);
     setActionError(null);
     setCompletedTx(null);
-    if (employees.length > 0 && !selectedEmpId) {
-      setSelectedEmpId(employees[0].employeeId);
-    }
+    setNotes('');
+    setDueDate('');
   };
 
   const handleIssueSubmit = async (e: React.FormEvent) => {
@@ -291,11 +302,19 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
               </div>
 
               {/* Status conflict alert */}
-              {asset.status !== 'Available' && (
+              {!completedTx && asset.status !== 'Available' && (
                 <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>
-                    Cannot issue: This asset is currently <strong>{asset.status}</strong> (Assigned to: {asset.assignedTo || 'N/A'}). It must be returned first.
+                    {asset.status === 'Issued' ? (
+                      <>Cannot issue: this asset is already <strong>Issued</strong> to {asset.assignedTo}. Return it first.</>
+                    ) : asset.status === 'Under Maintenance' ? (
+                      <>Cannot issue: this asset is <strong>Under Maintenance</strong>. Close its repair ticket first.</>
+                    ) : asset.status === 'Missing' || asset.status === 'Lost' ? (
+                      <>Cannot issue: this asset is <strong>{asset.status}</strong>. Use Resolve / Recover when it is found.</>
+                    ) : (
+                      <>Cannot issue: this asset is <strong>{asset.status}</strong>. Only Available assets can be issued.</>
+                    )}
                   </span>
                 </div>
               )}
@@ -307,7 +326,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                       <div>
-                        <h4 className="text-sm font-bold">Successfully Issued!</h4>
+                        <h4 className="text-sm font-bold">Issued to {completedTx.transaction.employeeName}</h4>
                         <p className="text-xs text-emerald-800">
                           Transaction ID: <span className="font-mono">{completedTx.transaction.transactionId}</span>
                         </p>
@@ -321,10 +340,25 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                       <span>Print Handover Voucher</span>
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletedTx(null);
+                      setAsset(null);
+                      setAssetIdInput('');
+                      setSelectedEmpId('');
+                      setNotes('');
+                      setDueDate('');
+                    }}
+                    className="text-xs font-bold text-emerald-900 underline"
+                  >
+                    Issue another asset
+                  </button>
                 </div>
               )}
 
-              {/* Issue Form */}
+              {/* Issue Form (only for an Available asset, hidden once issued) */}
+              {!completedTx && asset.status === 'Available' && (
               <form onSubmit={handleIssueSubmit} className="p-5 space-y-4">
                 {actionError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
@@ -346,7 +380,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
                   >
                     <option value="">-- Choose Employee --</option>
-                    {employees.map((emp) => (
+                    {employees.filter((emp) => emp.activeStatus).map((emp) => (
                       <option key={emp.employeeId} value={emp.employeeId}>
                         {emp.fullName} ({emp.employeeId}) — {emp.designation} · {emp.department}
                       </option>
@@ -368,6 +402,9 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                       <option value="New">New (Factory Sealed)</option>
                       <option value="Good">Good (Operational & Clean)</option>
                       <option value="Fair">Fair (Minor Cosmetic Wear)</option>
+                      <option value="Minor Wear">Minor Wear</option>
+                      <option value="Needs Repair">Needs Repair (issue anyway)</option>
+                      <option value="Damaged">Damaged (issue anyway)</option>
                     </select>
                   </div>
 
@@ -378,6 +415,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                     </label>
                     <input
                       type="date"
+                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]}
                       value={dueDate}
                       onChange={(e) => setDueDate(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
@@ -429,6 +467,7 @@ export const IssueAssetView: React.FC<IssueAssetViewProps> = ({
                   </button>
                 </div>
               </form>
+              )}
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-xs border border-dashed border-slate-300 p-12 text-center text-slate-400">

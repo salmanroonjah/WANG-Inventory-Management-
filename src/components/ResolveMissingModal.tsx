@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, CheckCircle2, AlertCircle } from 'lucide-react';
-import { Asset, AssetCondition, AssetTransaction } from '../types/inventory.js';
-import { api } from '../services/api.js';
+import { Asset, AssetCondition, AssetTransaction, LocationRecord } from '../types/inventory.js';
+import { api, defaultStoreLocation } from '../services/api.js';
+import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface ResolveMissingModalProps {
   isOpen: boolean;
   onClose: () => void;
   asset: Asset | null;
+  locations?: LocationRecord[];
   onSuccess: (updatedAsset: Asset, transaction: AssetTransaction) => void;
 }
 
@@ -14,14 +16,25 @@ export const ResolveMissingModal: React.FC<ResolveMissingModalProps> = ({
   isOpen,
   onClose,
   asset,
+  locations = [],
   onSuccess
 }) => {
   const [newStatus, setNewStatus] = useState<'Available' | 'Under Maintenance'>('Available');
   const [condition, setCondition] = useState<AssetCondition>('Good');
-  const [location, setLocation] = useState('Central Store - Bay A');
+  const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && asset) {
+      setNewStatus('Available');
+      setCondition('Good');
+      setLocation(defaultStoreLocation(locations, asset.buildingRoom));
+      setNotes('');
+      setError(null);
+    }
+  }, [isOpen, asset?.assetId]);
 
   if (!isOpen || !asset) return null;
 
@@ -105,7 +118,9 @@ export const ResolveMissingModal: React.FC<ResolveMissingModalProps> = ({
                 onChange={(e) => setCondition(e.target.value as any)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-600"
               >
+                <option value="New">New</option>
                 <option value="Good">Good</option>
+                <option value="Fair">Fair</option>
                 <option value="Minor Wear">Minor Wear</option>
                 <option value="Needs Repair">Needs Repair</option>
                 <option value="Damaged">Damaged</option>
@@ -113,17 +128,13 @@ export const ResolveMissingModal: React.FC<ResolveMissingModalProps> = ({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Restored Location / Room
-            </label>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-600"
-            />
-          </div>
+          <BuildingRoomSelector
+            locations={locations}
+            value={location}
+            onChange={(val) => setLocation(val)}
+            buildingLabel="Restored Building"
+            roomLabel="Restored Room"
+          />
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">

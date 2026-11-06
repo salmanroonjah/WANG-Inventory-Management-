@@ -53,7 +53,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
   const [newStock, setNewStock] = useState('10');
   const [newThreshold, setNewThreshold] = useState('3');
   const [newUnitCost, setNewUnitCost] = useState('500');
-  const [newLocation, setNewLocation] = useState('Central Store - Shelf 1');
+  const [newLocation, setNewLocation] = useState('');
   const [newSupplier, setNewSupplier] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -104,7 +104,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
         unit: newUnit.trim(),
         currentStock: parseInt(newStock, 10) || 0,
         openingBalance: parseInt(newStock, 10) || 0,
-        minimumThreshold: parseInt(newThreshold, 10) || 1,
+        minimumThreshold: Math.max(0, parseInt(newThreshold, 10) || 0),
         unitCost: parseFloat(newUnitCost) || 0,
         location: newLocation.trim(),
         supplier: newSupplier.trim()
@@ -141,6 +141,10 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
     e.preventDefault();
     if (!adjustItem) return;
 
+    if (!deltaQty || deltaQty < 1) {
+      setError('Enter a quantity of at least 1.');
+      return;
+    }
     const actualDelta = adjustType === 'RECEIVE' ? Math.abs(deltaQty) : -Math.abs(deltaQty);
     if (adjustType === 'ISSUE' && adjustItem.currentStock < Math.abs(deltaQty)) {
       setError(`Insufficient stock! Cannot issue ${deltaQty} units. Only ${adjustItem.currentStock} in stock.`);
@@ -155,7 +159,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
         itemCode: adjustItem.itemCode,
         deltaQty: actualDelta,
         reason: reason.trim() || (adjustType === 'RECEIVE' ? 'Stock restock shipment' : 'Departmental supply requisition'),
-        employeeId: selectedEmpId || undefined
+        employeeId: adjustType === 'ISSUE' ? selectedEmpId || undefined : undefined
       });
 
       setSuccessMsg(`Stock updated for ${adjustItem.itemName}.`);
@@ -294,6 +298,9 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                                 onClick={() => {
                                   setAdjustItem(item);
                                   setAdjustType('ISSUE');
+                                  setDeltaQty(1);
+                                  setReason('');
+                                  setSelectedEmpId('');
                                   setError(null);
                                 }}
                                 title="Issue Stock to Staff"
@@ -307,6 +314,9 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                                 onClick={() => {
                                   setAdjustItem(item);
                                   setAdjustType('RECEIVE');
+                                  setDeltaQty(1);
+                                  setReason('');
+                                  setSelectedEmpId('');
                                   setError(null);
                                 }}
                                 title="Restock New Supplies"
@@ -574,8 +584,8 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                   min="1"
                   max={adjustType === 'ISSUE' ? adjustItem.currentStock : 99999}
                   required
-                  value={deltaQty}
-                  onChange={(e) => setDeltaQty(parseInt(e.target.value, 10) || 1)}
+                  value={deltaQty || ''}
+                  onChange={(e) => setDeltaQty(parseInt(e.target.value, 10) || 0)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-[#003279]"
                 />
               </div>
@@ -591,7 +601,7 @@ export const ConsumablesView: React.FC<ConsumablesViewProps> = ({
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#003279]"
                   >
                     <option value="">-- Select Employee (Optional) --</option>
-                    {employees.map(e => (
+                    {employees.filter(e => e.activeStatus).map(e => (
                       <option key={e.employeeId} value={e.employeeId}>{e.fullName} ({e.department})</option>
                     ))}
                   </select>

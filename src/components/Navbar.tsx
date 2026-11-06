@@ -1,53 +1,36 @@
 import React, { useState } from 'react';
-import { Camera, ChevronDown, RefreshCw, Menu, Download, Shield, User } from 'lucide-react';
-import { UserRole, UserSession } from '../types/inventory.js';
+import { Camera, ChevronDown, Menu, Download, Shield, User } from 'lucide-react';
+import { Employee, UserRole, UserSession } from '../types/inventory.js';
 import { api } from '../services/api.js';
 import wangLogo from '../assets/wang_logo.png';
 
 interface NavbarProps {
   currentUser: UserSession;
-  onSwitchRole: (role: UserRole) => void;
+  employees: Employee[];
+  onSwitchUser: (employeeId: string) => void;
   onOpenScanner: () => void;
-  onResetDemo: () => void;
   onToggleMobileMenu: () => void;
 }
 
+const ROLE_ICON: Partial<Record<UserRole, string>> = {
+  'Super Admin': '👑',
+  'Inventory & Finance Admin': '💼',
+  'Inventory Manager': '💼',
+  'IT Administrator': '💻',
+  Approver: '✅',
+  Auditor: '🔍',
+  Employee: '👤'
+};
+
 export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
-  onSwitchRole,
+  employees,
+  onSwitchUser,
   onOpenScanner,
-  onResetDemo,
   onToggleMobileMenu
 }) => {
   const [showRoleMenu, setShowRoleMenu] = useState(false);
-
-  // The 3 official WANG Admin Roles + Employee
-  const roleOptions: { role: UserRole; title: string; subtitle: string; icon: string }[] = [
-    {
-      role: 'Super Admin',
-      title: 'Super Admin',
-      subtitle: 'Executive Director (Full Authority)',
-      icon: '👑'
-    },
-    {
-      role: 'Inventory & Finance Admin',
-      title: 'Inventory & Finance Admin',
-      subtitle: 'Manager Admin & Finance',
-      icon: '💼'
-    },
-    {
-      role: 'IT Administrator',
-      title: 'IT Administrator',
-      subtitle: 'IT Department (Hardware & Systems)',
-      icon: '💻'
-    },
-    {
-      role: 'Employee',
-      title: 'Employee',
-      subtitle: 'General Staff Member',
-      icon: '👤'
-    }
-  ];
+  const activeEmployees = employees.filter((e) => e.activeStatus);
 
   const handleExportBackup = () => {
     try {
@@ -63,6 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Backup export failed', e);
+      alert('Backup export failed. Please try again.');
     }
   };
 
@@ -119,7 +103,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="sm:hidden">Scan</span>
           </button>
 
-          {/* Backup Database Button */}
+          {/* Backup Database Button (admins only: contains staff contact details) */}
+          {['Super Admin', 'Inventory & Finance Admin', 'IT Administrator', 'Inventory Manager'].includes(currentUser.role) && (
           <button
             onClick={handleExportBackup}
             title="Download full database backup (.json)"
@@ -128,16 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Download className="w-3.5 h-3.5 text-[#f1cc11]" />
             <span className="text-[11px]">Backup DB</span>
           </button>
-
-          {/* Reset Demo Data Button */}
-          <button
-            onClick={onResetDemo}
-            title="Reset to default seed data"
-            className="hidden lg:flex p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors text-xs items-center gap-1"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Reset</span>
-          </button>
+          )}
 
           {/* Role Switcher Dropdown (The 3 WANG Admins) */}
           <div className="relative">
@@ -170,23 +146,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <div className="px-3.5 py-2 border-b border-slate-100">
                     <p className="text-[11px] font-black text-[#003279] uppercase tracking-wider flex items-center gap-1.5">
                       <Shield className="w-3.5 h-3.5 text-[#f1cc11] fill-current" />
-                      WANG Administrative Roles
+                      Who is using this device?
                     </p>
                     <p className="text-[10px] text-slate-500">
-                      Switch active administrator view or staff persona
+                      Actions are recorded under the selected staff member. Their role comes from the Employees page.
                     </p>
                   </div>
 
-                  <div className="p-1 space-y-1">
-                    {roleOptions.map((opt) => {
-                      const isActive = currentUser.role === opt.role || 
-                        (opt.role === 'Inventory & Finance Admin' && (currentUser.role as any) === 'Inventory Manager');
+                  <div className="p-1 space-y-1 max-h-80 overflow-y-auto">
+                    {activeEmployees.length === 0 && (
+                      <p className="p-3 text-[11px] text-slate-500">No active employees registered yet.</p>
+                    )}
+                    {activeEmployees.map((emp) => {
+                      const isActive = currentUser.employeeId === emp.employeeId;
+                      const opt = {
+                        title: emp.fullName,
+                        subtitle: `${emp.role || 'Employee'} · ${emp.employeeId}`,
+                        icon: ROLE_ICON[emp.role || 'Employee'] || '👤'
+                      };
 
                       return (
                         <button
-                          key={opt.role}
+                          key={emp.employeeId}
                           onClick={() => {
-                            onSwitchRole(opt.role);
+                            onSwitchUser(emp.employeeId);
                             setShowRoleMenu(false);
                           }}
                           className={`w-full text-left p-2.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
@@ -219,7 +202,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <div className="border-t border-slate-100 mt-1 pt-2 px-3 pb-1">
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                       <User className="w-3 h-3 text-[#003279]" />
-                      <span>Executive Director has Super Admin authority.</span>
+                      <span>Secure login will replace this selector in the security update.</span>
                     </div>
                   </div>
                 </div>

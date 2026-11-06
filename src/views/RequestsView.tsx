@@ -1,18 +1,25 @@
 import React, { useState } from 'react';
 import { ClipboardList, PlusCircle, CheckCircle2, XCircle, Clock, Check } from 'lucide-react';
-import { AssetRequest, Employee, UserRole } from '../types/inventory.js';
-import { api } from '../services/api.js';
+import { AssetRequest, Employee, UserRole, UserSession } from '../types/inventory.js';
+import { api, APPROVER_ROLES, MANAGER_ROLES } from '../services/api.js';
 
 interface RequestsViewProps {
   requests: AssetRequest[];
   employees: Employee[];
+  currentUser: UserSession;
   userRole: UserRole;
   onRefresh: () => void;
 }
 
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const RequestsView: React.FC<RequestsViewProps> = ({
   requests,
   employees,
+  currentUser,
   userRole,
   onRefresh
 }) => {
@@ -21,42 +28,77 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const [itemDescription, setItemDescription] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [businessJustification, setBusinessJustification] = useState('');
-  const [requiredDate, setRequiredDate] = useState(new Date().toISOString().split('T')[0]);
-  const [selectedEmpId, setSelectedEmpId] = useState(employees[0]?.employeeId || '');
+  const [requiredDate, setRequiredDate] = useState(localToday());
+  const [selectedEmpId, setSelectedEmpId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const canApprove = userRole === 'Super Admin' || userRole === 'Inventory & Finance Admin' || (userRole as any) === 'Inventory Manager' || userRole === 'Approver';
+  const canApprove = APPROVER_ROLES.includes(userRole);
+  // Managers/approvers can file on behalf of staff; everyone else files for themselves.
+  const canFileForOthers = canApprove || MANAGER_ROLES.includes(userRole);
+  // Staff see only their own requests; managers/approvers see all.
+  const visibleRequests = canFileForOthers
+    ? requests
+    : requests.filter((r) => r.requestingEmployeeId === currentUser.employeeId);
+  const requestableEmployees = canFileForOthers
+    ? employees.filter((e) => e.activeStatus)
+    : employees.filter((e) => e.employeeId === currentUser.employeeId);
+
+  const openForm = () => {
+    setSelectedEmpId(currentUser.employeeId && employees.some((e) => e.employeeId === currentUser.employeeId) ? currentUser.employeeId : '');
+    setItemType('Fixed Asset');
+    setItemDescription('');
+    setQuantity(1);
+    setBusinessJustification('');
+    setRequiredDate(localToday());
+    setFormError(null);
+    setIsCreating(true);
+  };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const emp = employees.find(e => e.employeeId === selectedEmpId);
-
+    if (!selectedEmpId) {
+      setFormError('Select the staff member making the request.');
+      return;
+    }
+    setIsSubmitting(true);
+    setFormError(null);
     try {
       await api.createRequest({
         requestingEmployeeId: selectedEmpId,
-        requestingEmployeeName: emp?.fullName || 'WANG Employee',
-        department: emp?.department || 'Operations',
         itemType,
         itemDescription,
         quantity,
         businessJustification,
         requiredDate
       });
-
       setIsCreating(false);
-      setItemDescription('');
-      setBusinessJustification('');
       onRefresh();
-    } catch (err) {
-      console.error('Failed to submit request', err);
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to submit request.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleUpdateStatus = async (requestId: string, status: 'Approved' | 'Rejected' | 'Fulfilled') => {
+    let rejectionReason: string | undefined;
+    if (status === 'Rejected') {
+      const reason = window.prompt('Reason for rejecting this request:');
+      if (reason === null) return;
+      rejectionReason = reason.trim() || undefined;
+    }
+    setBusyId(requestId);
+    setActionError(null);
     try {
-      await api.updateRequestStatus(requestId, status);
+      await api.updateRequestStatus(requestId, status, { rejectionReason });
       onRefresh();
-    } catch (err) {
-      console.error('Failed to update request status', err);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to update request.');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -77,7 +119,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         </div>
 
         <button
-          onClick={() => setIsCreating(true)}
+          onClick={openForm}
           className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
         >
           <PlusCircle className="w-4 h-4" />
@@ -97,11 +139,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Requesting Staff Member *</label>
                 <select
+                  required
                   value={selectedEmpId}
                   onChange={(e) => setSelectedEmpId(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
                 >
-                  {employees.map(e => (
+                  <option value="">-- Select Staff Member --</option>
+                  {requestableEmployees.map(e => (
                     <option key={e.employeeId} value={e.employeeId}>{e.fullName} ({e.designation})</option>
                   ))}
                 </select>
@@ -145,6 +189,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               </div>
 
               <div>
+                <label className="block font-semibold text-slate-700 mb-1">Required By *</label>
+                <input
+                  type="date"
+                  required
+                  min={localToday()}
+                  value={requiredDate}
+                  onChange={(e) => setRequiredDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900"
+                />
+              </div>
+
+              <div>
                 <label className="block font-semibold text-slate-700 mb-1">Business Justification *</label>
                 <textarea
                   rows={2}
@@ -156,6 +212,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 />
               </div>
 
+              {formError && <p className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-800">{formError}</p>}
+
               <div className="pt-2 flex items-center justify-between">
                 <button
                   type="button"
@@ -166,14 +224,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-lg shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-semibold rounded-lg shadow-xs"
                 >
-                  Submit For Approval
+                  {isSubmitting ? 'Submitting…' : 'Submit For Approval'}
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {actionError && (
+        <div className="p-3 rounded-lg border border-rose-300 bg-rose-50 text-rose-900 text-xs">{actionError}</div>
       )}
 
       {/* Requests Table */}
@@ -192,7 +255,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {requests.map((r) => (
+              {visibleRequests.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-slate-500">No requests yet.</td>
+                </tr>
+              )}
+              {visibleRequests.map((r) => (
                 <tr key={r.requestId} className="hover:bg-slate-50">
                   <td className="py-3.5 px-4 font-mono font-bold text-slate-900">{r.requestNumber}</td>
                   <td className="py-3.5 px-4">
@@ -211,18 +279,26 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     }`}>
                       {r.status}
                     </span>
+                    {r.approverName && (
+                      <span className="block text-[10px] text-slate-500 mt-1">by {r.approverName}</span>
+                    )}
+                    {r.rejectionReason && (
+                      <span className="block text-[10px] text-rose-700 mt-0.5 max-w-[160px] whitespace-normal">{r.rejectionReason}</span>
+                    )}
                   </td>
                   {canApprove && (
                     <td className="py-3.5 px-4 text-right whitespace-nowrap">
                       {r.status === 'Pending' ? (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
+                            disabled={busyId === r.requestId}
                             onClick={() => handleUpdateStatus(r.requestId, 'Approved')}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded text-[11px] flex items-center gap-1 shadow-xs"
                           >
                             <Check className="w-3 h-3" /> Approve
                           </button>
                           <button
+                            disabled={busyId === r.requestId}
                             onClick={() => handleUpdateStatus(r.requestId, 'Rejected')}
                             className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 text-rose-800 font-semibold rounded text-[11px]"
                           >
@@ -231,6 +307,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         </div>
                       ) : r.status === 'Approved' ? (
                         <button
+                          disabled={busyId === r.requestId}
                           onClick={() => handleUpdateStatus(r.requestId, 'Fulfilled')}
                           className="px-2.5 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 font-semibold rounded text-[11px]"
                         >

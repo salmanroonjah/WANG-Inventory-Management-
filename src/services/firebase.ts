@@ -1,47 +1,51 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  getDocFromServer,
-  writeBatch
+import {
+  initializeFirestore,
+  getFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  Firestore
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// CRITICAL: Must use firestoreDatabaseId
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
-
-let isAuthInitialized = false;
-
-export async function ensureFirebaseAuth(): Promise<void> {
-  if (isAuthInitialized) return;
+function createDb(): Firestore {
   try {
-    await signInAnonymously(auth);
-    isAuthInitialized = true;
-  } catch (err) {
-    console.warn('Anonymous auth note (proceeding with public rules):', err);
+    // Offline cache shared between tabs, and undefined fields are dropped instead of
+    // throwing (form payloads often carry optional fields as undefined).
+    return initializeFirestore(
+      app,
+      {
+        ignoreUndefinedProperties: true,
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    // Already initialized (hot reload) or IndexedDB unavailable (private mode).
+    try {
+      return initializeFirestore(app, { ignoreUndefinedProperties: true }, firebaseConfig.firestoreDatabaseId);
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
   }
 }
 
-// Validate Firestore connection on boot
-export async function testFirestoreConnection(): Promise<boolean> {
-  try {
-    await getDocFromServer(doc(db, 'systemSettings', 'connection_test'));
-    return true;
-  } catch (error: any) {
-    if (error?.message?.includes('the client is offline')) {
-      console.warn('Firebase client appears offline, falling back to local store.');
-    }
-    return false;
+export const db = createDb();
+export const auth = getAuth(app);
+
+let authPromise: Promise<void> | null = null;
+
+export function ensureFirebaseAuth(): Promise<void> {
+  if (!authPromise) {
+    authPromise = signInAnonymously(auth)
+      .then(() => undefined)
+      .catch((err) => {
+        // Current Firestore rules do not require auth; continue without it.
+        console.warn('Anonymous auth unavailable, continuing without auth:', err?.code || err);
+      });
   }
+  return authPromise;
 }

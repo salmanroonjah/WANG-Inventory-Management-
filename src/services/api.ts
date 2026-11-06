@@ -1,1004 +1,880 @@
-import { 
-  Asset, 
-  AssetCondition, 
-  AssetStatus, 
-  AssetTransaction, 
-  Category, 
-  ConsumableItem, 
-  DashboardStats, 
-  Employee, 
-  GoogleSheetsSyncConfig, 
-  LocationRecord, 
-  MaintenanceRecord, 
-  PhysicalAudit, 
-  ActivityLog, 
-  AssetRequest, 
-  UserSession, 
-  UserRole 
+/**
+ * WANG Inventory data layer.
+ *
+ * Single source of truth: Cloud Firestore.
+ *  - Every collection is mirrored into an in-memory cache by realtime listeners,
+ *    so all devices see the same data and reads are instant.
+ *  - Every change that touches more than one record (issue, return, stock
+ *    adjustment, maintenance, ...) runs in a Firestore transaction or batch, so
+ *    an asset, its transaction-history row and its activity-log row are always
+ *    written together or not at all, and stale/double actions are rejected.
+ *  - Counters (assets per category / location, assets per employee) are derived
+ *    from the asset list instead of being stored, so they can never drift.
+ *
+ * The signed-in user is kept per device (localStorage) until real login is added.
+ */
+import {
+  collection,
+  doc,
+  onSnapshot,
+  runTransaction,
+  writeBatch,
+  setDoc,
+  WriteBatch,
+  Transaction
+} from 'firebase/firestore';
+import { db, ensureFirebaseAuth } from './firebase.js';
+import {
+  Asset,
+  AssetCondition,
+  AssetStatus,
+  AssetTransaction,
+  Category,
+  ConsumableItem,
+  DashboardStats,
+  Employee,
+  GoogleSheetsSyncConfig,
+  LocationRecord,
+  MaintenanceRecord,
+  PhysicalAudit,
+  PhysicalAuditItem,
+  ActivityLog,
+  AssetRequest,
+  UserSession,
+  UserRole,
+  TransactionType
 } from '../types/inventory.js';
-import { 
-  initFirestoreIfEmpty,
-  fetchAllAssetsFromFirestore,
-  saveAssetToFirestore,
-  deleteAssetFromFirestore,
-  fetchAllEmployeesFromFirestore,
-  saveEmployeeToFirestore,
-  deleteEmployeeFromFirestore,
-  fetchTransactionsFromFirestore,
-  saveTransactionToFirestore,
-  fetchConsumablesFromFirestore,
-  saveConsumableToFirestore,
-  deleteConsumableFromFirestore,
-  fetchCategoriesFromFirestore,
-  saveCategoryToFirestore,
-  deleteCategoryFromFirestore,
-  fetchLocationsFromFirestore,
-  saveLocationToFirestore,
-  deleteLocationFromFirestore,
-  fetchRequestsFromFirestore,
-  saveRequestToFirestore,
-  fetchMaintenanceFromFirestore,
-  saveMaintenanceToFirestore,
-  fetchActivityLogsFromFirestore,
-  saveActivityLogToFirestore,
-  clearActivityLogsFromFirestore,
-  subscribeToWANGDatabase,
-  RealtimeSyncPayload,
-  fetchUserFromFirestore,
-  saveUserToFirestore
-} from './firestoreDb.js';
 
-const BASE_URL = '/api';
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
 
-// Fallback initial seed for static GitHub hosting (where backend Express server is not available)
-const FALLBACK_SEED = {
-  user: {
-    userId: 'USR-EXEC-01',
-    name: 'Dr. Salman Khan',
-    email: 'salmankhanroonjha123@gmail.com',
-    role: 'Super Admin' as UserRole,
-    employeeId: 'EMP-001',
-    officeBranch: 'Head Office - Islamabad'
-  },
-  categories: [
-    { categoryId: 'CAT-FUR', categoryName: 'Furniture', description: 'Office chairs, desks, tables, and general seating furniture', totalAssets: 1 },
-    { categoryId: 'CAT-FFW', categoryName: 'Furniture, Fixtures & Wall Fittings', description: 'Storage cabinets, shelving units, partitions, notice boards, and wall fixtures', totalAssets: 1 },
-    { categoryId: 'CAT-ITC', categoryName: 'IT & Computing', description: 'Laptops, desktop computers, servers, switches, routers, and monitors', totalAssets: 3 },
-    { categoryId: 'CAT-MED', categoryName: 'Media & Production', description: 'Cameras, video recorders, audio gear, lighting kits, and broadcasting tools', totalAssets: 2 },
-    { categoryId: 'CAT-OFA', categoryName: 'Office Automation', description: 'Printers, copiers, document scanners, shredders, and counting machines', totalAssets: 1 },
-    { categoryId: 'CAT-TAM', categoryName: 'Tools & Maintenance', description: 'Hand tools, power tools, workshop hardware, and servicing equipment', totalAssets: 0 },
-    { categoryId: 'CAT-STV', categoryName: 'Stitching & Vocational', description: 'Industrial sewing machines, vocational training kits, and tailoring tools', totalAssets: 0 },
-    { categoryId: 'CAT-KPA', categoryName: 'Kitchen & Pantry Appliances', description: 'Microwaves, refrigerators, water dispensers, kettles, and kitchenware', totalAssets: 0 },
-    { categoryId: 'CAT-EPS', categoryName: 'Electrical & Power Systems', description: 'Generators, solar inverters, UPS backup units, and electrical power distribution', totalAssets: 4 },
-    { categoryId: 'CAT-CCTV', categoryName: 'CCTV & Security', description: 'Security cameras, DVR/NVR units, biometric access control, and alarms', totalAssets: 0 },
-    { categoryId: 'CAT-WAS', categoryName: 'Water & Sanitation', description: 'Water filtration plants, pumps, plumbing supplies, and sanitation hardware', totalAssets: 0 }
-  ],
-  employees: [
-    { employeeId: 'EMP-001', fullName: 'Dr. Salman Khan', department: 'Executive Management', designation: 'Executive Director', email: 'salmankhanroonjha123@gmail.com', phone: '+92 300 8765432', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'Super Admin' as UserRole },
-    { employeeId: 'EMP-002', fullName: 'Ayesha Noor', department: 'Admin & Finance', designation: 'Manager Admin & Finance', email: 'ayesha.noor@wang.org.pk', phone: '+92 312 9876543', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'Inventory & Finance Admin' as UserRole },
-    { employeeId: 'EMP-003', fullName: 'Bilal Tariq', department: 'Finance & Compliance', designation: 'Finance & Accounts Officer', email: 'bilal.tariq@wang.org.pk', phone: '+92 333 4567890', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 0, role: 'Employee' as UserRole },
-    { employeeId: 'EMP-004', fullName: 'Fatima Zahra', department: 'IT Department', designation: 'IT Systems Administrator', email: 'fatima.zahra@wang.org.pk', phone: '+92 345 6789012', officeBranch: 'Head Office - Islamabad', activeStatus: true, assignedAssetCount: 1, role: 'IT Administrator' as UserRole },
-    { employeeId: 'EMP-005', fullName: 'Tariq Mehmood', department: 'Logistics & Field Support', designation: 'Field Logistics Coordinator', email: 'tariq.mehmood@wang.org.pk', phone: '+92 321 3456789', officeBranch: 'Field Office - Quetta', activeStatus: true, assignedAssetCount: 0, role: 'Employee' as UserRole }
-  ],
-  locations: [
-    { locationId: 'LOC-HO-101', officeBranch: 'Head Office - Islamabad', building: 'Main Administrative Block', floor: '1st Floor', room: 'Room 101 - Executive Suite', description: 'Executive Director and Board meeting room', isStore: false, assetCount: 1 },
-    { locationId: 'LOC-HO-204', officeBranch: 'Head Office - Islamabad', building: 'East Wing', floor: '2nd Floor', room: 'Room 204 - IT & Media Lab', description: 'IT infrastructure, server racks, and media editing', isStore: false, assetCount: 3 },
-    { locationId: 'LOC-HO-STR', officeBranch: 'Head Office - Islamabad', building: 'Ground Facility', floor: 'Ground', room: 'Central Store - Bay A', description: 'Primary storage for unissued equipment and consumables', isStore: true, assetCount: 5 },
-    { locationId: 'LOC-QTA-01', officeBranch: 'Field Office - Quetta', building: 'Provincial Office', floor: 'Ground', room: 'Operations Wing - Office 2', description: 'Balochistan community outreach and field operations hub', isStore: false, assetCount: 2 },
-    { locationId: 'LOC-BEL-01', officeBranch: 'Bela', building: 'Head Office Building', floor: 'Ground Floor', room: 'Room 01: Reception Office', description: 'Main reception, visitor registration and general administrative desk', isStore: false, assetCount: 0 },
-    { locationId: 'LOC-BEL-02', officeBranch: 'Bela', building: 'Head Office Building', floor: '1st Floor', room: 'Room 02: WANG Office', description: 'Executive Director leadership office and core operations team workspace', isStore: false, assetCount: 0 }
-  ],
-  assets: [
-    {
-      assetId: 'WANG-EPS-001',
-      categoryId: 'CAT-EPS',
-      categoryName: 'Electrical & Power Systems',
-      itemName: 'Dell Latitude 5420 Laptop',
-      brand: 'Dell',
-      model: 'Latitude 5420 Core i7 16GB 512GB SSD',
-      serialNumber: 'DL-5420-99214',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2024-03-15',
-      purchaseCost: 1150,
-      supplier: 'MegaTech Systems Pvt Ltd',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Room 101 - Executive Suite',
-      assignedEmployeeId: 'EMP-001',
-      assignedTo: 'Dr. Salman Khan',
-      condition: 'Good',
-      status: 'Issued',
-      warrantyExpiry: '2027-03-14',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2024-0315-DL',
-      remarks: 'Primary executive machine. Fully encrypted BitLocker.',
-      recordCompletion: 'Verified',
-      createdAt: '2024-03-15T09:00:00Z',
-      lastUpdated: '2026-09-10T11:20:00Z',
-      dueDate: '2026-12-31'
-    },
-    {
-      assetId: 'WANG-EPS-002',
-      categoryId: 'CAT-EPS',
-      categoryName: 'Electrical & Power Systems',
-      itemName: 'Logitech MX Master 3S Wireless Mouse',
-      brand: 'Logitech',
-      model: 'MX Master 3S Performance Edition',
-      serialNumber: 'SN-LOG-MX3S-8819',
-      quantity: 1,
-      unit: 'Piece',
-      purchaseDate: '2025-01-10',
-      purchaseCost: 99,
-      supplier: 'TechZone Islamabad',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Central Store - Bay A',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2027-01-09',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2025-0110-LOG',
-      remarks: 'Ready for issuance to staff upon request. Tested and paired.',
-      recordCompletion: 'Complete',
-      createdAt: '2025-01-10T14:30:00Z',
-      lastUpdated: '2026-10-01T08:00:00Z'
-    },
-    {
-      assetId: 'WANG-EPS-003',
-      categoryId: 'CAT-EPS',
-      categoryName: 'Electrical & Power Systems',
-      itemName: 'APC Smart-UPS 1500VA LCD 230V',
-      brand: 'Schneider Electric / APC',
-      model: 'SMT1500I',
-      serialNumber: 'APC-1500-472910',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2023-11-05',
-      purchaseCost: 580,
-      supplier: 'PowerCare Engineering',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Room 204 - IT & Media Lab',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2026-11-04',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2023-APC1500',
-      remarks: 'Provides battery backup to IT lab rack and networking switch.',
-      recordCompletion: 'Verified',
-      createdAt: '2023-11-05T10:00:00Z',
-      lastUpdated: '2026-08-14T16:45:00Z'
-    },
-    {
-      assetId: 'WANG-OFA-001',
-      categoryId: 'CAT-OFA',
-      categoryName: 'Office Automation',
-      itemName: 'HP LaserJet Pro MFP 4103fdw Printer',
-      brand: 'HP',
-      model: 'LaserJet 4103fdw All-in-One Duplex WiFi',
-      serialNumber: 'CNB1N59021',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2024-06-20',
-      purchaseCost: 480,
-      supplier: 'OfficeDepot Pakistan',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Room 204 - IT & Media Lab',
-      assignedEmployeeId: 'EMP-004',
-      assignedTo: 'Fatima Zahra',
-      condition: 'Good',
-      status: 'Issued',
-      warrantyExpiry: '2027-06-19',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2024-HP4103',
-      remarks: 'Shared network office printer. Maintained by IT specialist.',
-      recordCompletion: 'Verified',
-      createdAt: '2024-06-20T11:00:00Z',
-      lastUpdated: '2026-07-22T09:15:00Z'
-    },
-    {
-      assetId: 'WANG-ITC-001',
-      categoryId: 'CAT-ITC',
-      categoryName: 'IT & Computing',
-      itemName: 'Dell UltraSharp 27" 4K USB-C Hub Monitor',
-      brand: 'Dell',
-      model: 'U2723QE',
-      serialNumber: 'CN-0M381P-74261',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2024-08-12',
-      purchaseCost: 620,
-      supplier: 'MegaTech Systems Pvt Ltd',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'East Wing - Operations Floor',
-      assignedEmployeeId: 'EMP-002',
-      assignedTo: 'Ayesha Noor',
-      condition: 'Good',
-      status: 'Issued',
-      warrantyExpiry: '2027-08-11',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2024-DELL27',
-      remarks: 'Assigned for GIS mapping and field project presentations.',
-      recordCompletion: 'Verified',
-      createdAt: '2024-08-12T12:00:00Z',
-      lastUpdated: '2026-09-01T14:10:00Z',
-      dueDate: '2026-11-30'
-    },
-    {
-      assetId: 'WANG-FUR-001',
-      categoryId: 'CAT-FUR',
-      categoryName: 'Furniture',
-      itemName: 'Ergonomic High-Back Executive Mesh Chair',
-      brand: 'Habitt Executive',
-      model: 'AeroPro Ergonomic',
-      serialNumber: 'HAB-CH-8831',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2023-09-01',
-      purchaseCost: 190,
-      supplier: 'Habitt Commercial Solutions',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Central Store - Bay A',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2028-08-31',
-      invoiceDocLink: '',
-      remarks: 'Assembled and stored in Bay A.',
-      recordCompletion: 'Complete',
-      createdAt: '2023-09-01T15:00:00Z',
-      lastUpdated: '2026-06-15T10:00:00Z'
-    },
-    {
-      assetId: 'WANG-FFW-001',
-      categoryId: 'CAT-FFW',
-      categoryName: 'Furniture, Fixtures & Wall Fittings',
-      itemName: 'Steel Fireproof Document Safe Cabinet',
-      brand: 'ChubbSafe',
-      model: 'DataPlus 2-Hour Fire Resistant',
-      serialNumber: 'CHS-SAFE-1029',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2022-05-18',
-      purchaseCost: 750,
-      supplier: 'SafeTech Security Hardware',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Room 101 - Executive Suite',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2032-05-17',
-      invoiceDocLink: '',
-      remarks: 'Houses project contracts and legal NGO registrations.',
-      recordCompletion: 'Verified',
-      createdAt: '2022-05-18T10:00:00Z',
-      lastUpdated: '2026-01-10T12:00:00Z'
-    },
-    {
-      assetId: 'WANG-MED-001',
-      categoryId: 'CAT-MED',
-      categoryName: 'Media & Production',
-      itemName: 'Canon EOS R50 Mirrorless Camera + 18-45mm Kit',
-      brand: 'Canon',
-      model: 'EOS R50 4K Content Creator Kit',
-      serialNumber: 'CAN-R50-441092',
-      quantity: 1,
-      unit: 'Set',
-      purchaseDate: '2024-10-05',
-      purchaseCost: 790,
-      supplier: 'Digital Vision Media',
-      officeBranch: 'Field Office - Quetta',
-      buildingRoom: 'Operations Wing - Office 2',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2026-10-04',
-      invoiceDocLink: 'https://drive.google.com/wang-invoices/INV-2024-CANON',
-      remarks: 'Field documentation camera kit with dual batteries and bag.',
-      recordCompletion: 'Verified',
-      createdAt: '2024-10-05T09:30:00Z',
-      lastUpdated: '2026-09-20T15:20:00Z'
-    },
-    {
-      assetId: 'WANG-MED-002',
-      categoryId: 'CAT-MED',
-      categoryName: 'Media & Production',
-      itemName: 'Iridium Extreme 9575 Satellite Handset',
-      brand: 'Iridium',
-      model: 'Extreme 9575 Military Grade',
-      serialNumber: 'IRID-9575-31088',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2023-04-12',
-      purchaseCost: 1450,
-      supplier: 'GlobalSat Communications',
-      officeBranch: 'Field Office - Quetta',
-      buildingRoom: 'Operations Wing - Office 2',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Good',
-      status: 'Available',
-      warrantyExpiry: '2026-04-11',
-      invoiceDocLink: '',
-      remarks: 'Emergency distress satellite communication for remote flood-relief missions.',
-      recordCompletion: 'Verified',
-      createdAt: '2023-04-12T11:00:00Z',
-      lastUpdated: '2026-08-01T10:00:00Z'
-    },
-    {
-      assetId: 'WANG-EPS-004',
-      categoryId: 'CAT-EPS',
-      categoryName: 'Electrical & Power Systems',
-      itemName: 'Yamaha EF2000iS Inverter Generator 2kVA',
-      brand: 'Yamaha',
-      model: 'EF2000iS Silent Inverter',
-      serialNumber: 'YAM-GEN-2000-551',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2023-07-19',
-      purchaseCost: 890,
-      supplier: 'PowerCare Engineering',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Central Store - Bay A',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Needs Repair',
-      status: 'Under Maintenance',
-      warrantyExpiry: '2025-07-18',
-      invoiceDocLink: '',
-      remarks: 'Carburetor cleaning and spark plug replacement underway.',
-      recordCompletion: 'Complete',
-      createdAt: '2023-07-19T08:00:00Z',
-      lastUpdated: '2026-10-15T14:00:00Z'
-    },
-    {
-      assetId: 'WANG-ITC-002',
-      categoryId: 'CAT-ITC',
-      categoryName: 'IT & Computing',
-      itemName: 'Lenovo ThinkPad X1 Carbon Gen 10',
-      brand: 'Lenovo',
-      model: 'X1 Carbon Core i7 32GB',
-      serialNumber: 'PF-4912KL',
-      quantity: 1,
-      unit: 'Unit',
-      purchaseDate: '2023-02-14',
-      purchaseCost: 1650,
-      supplier: 'MegaTech Systems Pvt Ltd',
-      officeBranch: 'Head Office - Islamabad',
-      buildingRoom: 'Room 204 - IT & Media Lab',
-      assignedEmployeeId: '',
-      assignedTo: '',
-      condition: 'Fair',
-      status: 'Available',
-      warrantyExpiry: '2026-02-13',
-      invoiceDocLink: '',
-      remarks: 'Spare laptop available for field volunteers and guest researchers.',
-      recordCompletion: 'Complete',
-      createdAt: '2023-02-14T10:00:00Z',
-      lastUpdated: '2026-09-18T16:00:00Z'
+const nowIso = () => new Date().toISOString();
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const norm = (s: unknown) => String(s ?? '').trim().toUpperCase();
+const same = (a: unknown, b: unknown) => norm(a) === norm(b);
+const str = (v: unknown) => (v === undefined || v === null ? '' : String(v));
+const num = (v: unknown, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+let idCounter = 0;
+const uniqueId = (prefix: string) =>
+  `${prefix}-${Date.now()}${String(++idCounter % 1000).padStart(3, '0')}${Math.floor(Math.random() * 10)}`;
+
+/** "Building - Room": the format used everywhere for an asset's buildingRoom. */
+export function locationLabel(loc: Pick<LocationRecord, 'building' | 'room'>): string {
+  const b = str(loc.building).trim();
+  const r = str(loc.room).trim();
+  return b ? `${b} - ${r}` : r;
+}
+
+/** Default place for returned items: the first room marked as a store. */
+export function defaultStoreLocation(locations: LocationRecord[], fallback = ''): string {
+  const store = locations.find((l) => l.isStore) || locations[0];
+  return store ? locationLabel(store) : fallback;
+}
+
+/** True when the asset sits in this registered room. */
+export function assetInLocation(asset: Asset, loc: LocationRecord): boolean {
+  const br = norm(asset.buildingRoom);
+  if (!br) return false;
+  if (br === norm(locationLabel(loc))) return true;
+  // Legacy records stored only the room name; accept that when the branch matches.
+  return br === norm(loc.room) && (!asset.officeBranch || same(asset.officeBranch, loc.officeBranch));
+}
+
+export const MANAGER_ROLES: UserRole[] = ['Super Admin', 'Inventory & Finance Admin', 'IT Administrator', 'Inventory Manager'];
+export const APPROVER_ROLES: UserRole[] = ['Super Admin', 'Inventory & Finance Admin', 'Inventory Manager', 'Approver'];
+
+function friendlyError(err: any, fallback: string): Error {
+  if (err instanceof Error && !(err as any).code) return err;
+  const code = err?.code || '';
+  if (code === 'unavailable' || code === 'failed-precondition' && /offline/i.test(err?.message || '')) {
+    return new Error('No internet connection. This action needs to reach the server - please try again when online.');
+  }
+  if (code === 'permission-denied') return new Error('The database refused this change (permission denied).');
+  return new Error(err?.message || fallback);
+}
+
+// ---------------------------------------------------------------------------
+// Session (per device)
+// ---------------------------------------------------------------------------
+
+const SESSION_KEY = 'WANG_SESSION_USER';
+const FALLBACK_USER: UserSession = {
+  userId: 'USR-LOCAL',
+  name: 'Administrator',
+  email: '',
+  role: 'Super Admin'
+};
+
+function readSession(): UserSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (raw) {
+      const u = JSON.parse(raw);
+      if (u && u.role) return u;
     }
-  ],
+  } catch {}
+  return null;
+}
+
+function writeSession(u: UserSession) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
+  } catch {}
+}
+
+// Data from older versions of the app lived in localStorage and could show
+// demo records instead of the real database. Remove it once.
+try {
+  localStorage.removeItem('WANG_INVENTORY_LOCAL_DB');
+  localStorage.removeItem('WANG_DELETED_ASSET_IDS');
+} catch {}
+
+function sessionFromEmployee(e: Employee, role?: UserRole): UserSession {
+  return {
+    userId: `USR-${e.employeeId}`,
+    name: e.fullName,
+    email: e.email,
+    role: role || e.role || 'Employee',
+    employeeId: e.employeeId,
+    officeBranch: e.officeBranch
+  };
+}
+
+function currentUser(): UserSession {
+  const s = readSession();
+  if (s) return s;
+  const admin = cache.employees.find((e) => e.role === 'Super Admin' && e.activeStatus !== false);
+  return admin ? sessionFromEmployee(admin) : FALLBACK_USER;
+}
+
+function requireRole(roles: UserRole[], action: string) {
+  const u = currentUser();
+  if (!roles.includes(u.role)) {
+    throw new Error(`Your role (${u.role}) is not allowed to ${action}.`);
+  }
+  return u;
+}
+
+// ---------------------------------------------------------------------------
+// Realtime cache
+// ---------------------------------------------------------------------------
+
+const COLLECTIONS = [
+  'assets',
+  'employees',
+  'categories',
+  'locations',
+  'consumables',
+  'transactions',
+  'requests',
+  'maintenance',
+  'audits',
+  'activityLogs'
+] as const;
+type CollectionName = (typeof COLLECTIONS)[number];
+
+interface Cache {
+  assets: Asset[];
+  employees: Employee[];
+  categories: Category[];
+  locations: LocationRecord[];
+  consumables: ConsumableItem[];
+  transactions: AssetTransaction[];
+  requests: AssetRequest[];
+  maintenance: MaintenanceRecord[];
+  audits: PhysicalAudit[];
+  activityLogs: ActivityLog[];
+}
+
+const cache: Cache = {
+  assets: [],
+  employees: [],
+  categories: [],
+  locations: [],
   consumables: [],
-  transactions: [
-    { transactionId: 'TX-2024-001', assetId: 'WANG-EPS-001', assetName: 'Dell Latitude 5420 Laptop', employeeId: 'EMP-001', employeeName: 'Dr. Salman Khan', transactionType: 'ISSUE', performedByUserId: 'USR-ADMIN', performedByName: 'Admin Manager', timestamp: '2024-03-16T10:00:00Z', previousStatus: 'Available', newStatus: 'Issued', condition: 'New', notes: 'Initial executive issuance with secure corporate credentials.', dueDate: '2026-12-31', location: 'Room 101 - Executive Suite' },
-    { transactionId: 'TX-2024-002', assetId: 'WANG-ITC-001', assetName: 'Dell UltraSharp 27" 4K USB-C Hub Monitor', employeeId: 'EMP-002', employeeName: 'Ayesha Noor', transactionType: 'ISSUE', performedByUserId: 'USR-ADMIN', performedByName: 'Admin Manager', timestamp: '2024-08-15T11:00:00Z', previousStatus: 'Available', newStatus: 'Issued', condition: 'Good', notes: 'Issued for GIS and remote field monitoring.', dueDate: '2026-11-30', location: 'East Wing - Operations Floor' },
-    { transactionId: 'TX-2024-003', assetId: 'WANG-OFA-001', assetName: 'HP LaserJet Pro MFP 4103fdw Printer', employeeId: 'EMP-004', employeeName: 'Fatima Zahra', transactionType: 'ISSUE', performedByUserId: 'USR-ADMIN', performedByName: 'Admin Manager', timestamp: '2024-06-25T14:30:00Z', previousStatus: 'Available', newStatus: 'Issued', condition: 'Good', notes: 'Handed over for departmental printing supervision.', location: 'Room 204 - IT & Media Lab' }
-  ],
+  transactions: [],
   requests: [],
   maintenance: [],
   audits: [],
-  activityLogs: [],
-  sheetsConfig: { spreadsheetId: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms', isConfigured: true, tabsFound: { startHere: true, masterAssets: true, categories: true, employeesLocations: true, assetTransactions: true }, totalSyncedRows: 11, autoSyncOnChange: true }
+  activityLogs: []
 };
 
-// LocalStorage Deleted Assets Blacklist to prevent resurrection from cloud or fallback seed
-export function getDeletedAssetIds(): Set<string> {
-  try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_DELETED_ASSET_IDS') : null;
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return new Set(parsed.map((id: string) => String(id).trim().toUpperCase()));
-    }
-  } catch {}
-  return new Set<string>();
+export interface RealtimeSyncPayload {
+  assets?: Asset[];
+  employees?: Employee[];
+  categories?: Category[];
+  locations?: LocationRecord[];
+  consumables?: ConsumableItem[];
+  transactions?: AssetTransaction[];
+  requests?: AssetRequest[];
+  maintenance?: MaintenanceRecord[];
+  audits?: PhysicalAudit[];
+  activityLogs?: ActivityLog[];
 }
 
-export function addDeletedAssetIds(ids: string[]) {
-  try {
-    if (typeof window === 'undefined') return;
-    const current = getDeletedAssetIds();
-    ids.forEach(id => {
-      if (id) current.add(String(id).trim().toUpperCase());
+const byDesc = <T,>(key: (x: T) => string) => (a: T, b: T) => (key(b) || '').localeCompare(key(a) || '');
+
+const normalizers: { [K in CollectionName]: (d: any) => Cache[K][number] } = {
+  assets: (d): Asset => ({
+    ...d,
+    assetId: str(d.assetId),
+    categoryId: str(d.categoryId),
+    categoryName: str(d.categoryName),
+    itemName: str(d.itemName),
+    brand: str(d.brand),
+    model: str(d.model),
+    serialNumber: str(d.serialNumber),
+    quantity: num(d.quantity, 1),
+    unit: str(d.unit) || 'Unit',
+    purchaseDate: str(d.purchaseDate),
+    purchaseCost: num(d.purchaseCost),
+    supplier: str(d.supplier),
+    officeBranch: str(d.officeBranch),
+    buildingRoom: str(d.buildingRoom),
+    assignedEmployeeId: str(d.assignedEmployeeId),
+    assignedTo: str(d.assignedTo),
+    condition: d.condition || 'Good',
+    status: d.status || 'Available',
+    warrantyExpiry: str(d.warrantyExpiry),
+    invoiceDocLink: str(d.invoiceDocLink),
+    remarks: str(d.remarks),
+    recordCompletion: d.recordCompletion || 'Complete',
+    createdAt: str(d.createdAt),
+    lastUpdated: str(d.lastUpdated)
+  }),
+  employees: (d): Employee => ({
+    ...d,
+    employeeId: str(d.employeeId),
+    fullName: str(d.fullName),
+    department: str(d.department),
+    designation: str(d.designation),
+    email: str(d.email),
+    phone: str(d.phone),
+    officeBranch: str(d.officeBranch),
+    activeStatus: d.activeStatus !== false,
+    assignedAssetCount: 0,
+    role: d.role || 'Employee'
+  }),
+  categories: (d): Category => ({
+    ...d,
+    categoryId: str(d.categoryId),
+    categoryName: str(d.categoryName),
+    description: str(d.description),
+    totalAssets: 0
+  }),
+  locations: (d): LocationRecord => ({
+    ...d,
+    locationId: str(d.locationId),
+    officeBranch: str(d.officeBranch),
+    building: str(d.building),
+    floor: str(d.floor),
+    room: str(d.room),
+    description: str(d.description),
+    isStore: Boolean(d.isStore),
+    assetCount: 0
+  }),
+  consumables: (d): ConsumableItem => ({
+    ...d,
+    itemCode: str(d.itemCode),
+    itemName: str(d.itemName),
+    category: str(d.category),
+    unit: str(d.unit) || 'Unit',
+    openingBalance: num(d.openingBalance),
+    currentStock: num(d.currentStock),
+    minimumThreshold: num(d.minimumThreshold),
+    unitCost: num(d.unitCost),
+    location: str(d.location),
+    supplier: str(d.supplier),
+    lastUpdated: str(d.lastUpdated)
+  }),
+  transactions: (d): AssetTransaction => ({ ...d, notes: str(d.notes), assetName: str(d.assetName), employeeName: str(d.employeeName) }),
+  requests: (d): AssetRequest => ({ ...d, quantity: num(d.quantity, 1) }),
+  maintenance: (d): MaintenanceRecord => ({ ...d, repairCost: num(d.repairCost) }),
+  audits: (d): PhysicalAudit => ({ ...d, items: Array.isArray(d.items) ? d.items : [] }),
+  activityLogs: (d): ActivityLog => ({ ...d, details: str(d.details), userName: str(d.userName), action: str(d.action) })
+};
+
+const sorters: Partial<{ [K in CollectionName]: (a: Cache[K][number], b: Cache[K][number]) => number }> = {
+  assets: byDesc<Asset>((a) => a.createdAt),
+  transactions: byDesc<AssetTransaction>((t) => t.timestamp),
+  activityLogs: byDesc<ActivityLog>((l) => l.timestamp),
+  requests: byDesc<AssetRequest>((r) => r.requestDate),
+  maintenance: byDesc<MaintenanceRecord>((m) => m.reportedDate),
+  audits: byDesc<PhysicalAudit>((a) => a.startDate),
+  employees: (a: Employee, b: Employee) => a.employeeId.localeCompare(b.employeeId, undefined, { numeric: true }),
+  categories: (a: Category, b: Category) => a.categoryName.localeCompare(b.categoryName),
+  locations: (a: LocationRecord, b: LocationRecord) =>
+    `${a.officeBranch}|${a.building}|${a.room}`.localeCompare(`${b.officeBranch}|${b.building}|${b.room}`, undefined, { numeric: true }),
+  consumables: (a: ConsumableItem, b: ConsumableItem) => a.itemCode.localeCompare(b.itemCode, undefined, { numeric: true })
+};
+
+// --- write → cache consistency -------------------------------------------
+// After a write commits, wait until the realtime listeners have delivered the
+// change, so the next read (duplicate checks, counts, reloads) sees it.
+const snapCount: Record<string, number> = {};
+let snapWaiters: Array<() => void> = [];
+
+async function waitForSync(touched: Set<string>, before: Record<string, number>, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  const pending = () => [...touched].some((c) => (snapCount[c] || 0) <= (before[c] || 0));
+  while (pending() && Date.now() < deadline) {
+    await new Promise<void>((r) => {
+      snapWaiters.push(r);
+      setTimeout(r, Math.max(0, deadline - Date.now()));
     });
-    localStorage.setItem('WANG_DELETED_ASSET_IDS', JSON.stringify(Array.from(current)));
-  } catch {}
+  }
 }
 
-export function removeDeletedAssetId(id: string) {
-  try {
-    if (typeof window === 'undefined' || !id) return;
-    const current = getDeletedAssetIds();
-    const cleanId = String(id).trim().toUpperCase();
-    if (current.has(cleanId)) {
-      current.delete(cleanId);
-      localStorage.setItem('WANG_DELETED_ASSET_IDS', JSON.stringify(Array.from(current)));
+/** Wraps a transaction/batch so every set/update/delete records its collection. */
+function trackWrites<W extends object>(w: W, touched: Set<string>): W {
+  return new Proxy(w, {
+    get(target: any, prop) {
+      const v = target[prop];
+      if (prop === 'set' || prop === 'update' || prop === 'delete') {
+        return (ref: any, ...args: any[]) => {
+          if (ref?.parent?.id) touched.add(ref.parent.id);
+          v.call(target, ref, ...args);
+          return receiverFor(target);
+        };
+      }
+      return typeof v === 'function' ? v.bind(target) : v;
     }
-  } catch {}
+  });
+  function receiverFor(t: any) {
+    return t;
+  }
 }
 
-const LEGACY_DUMMY_CONSUMABLES = new Set(['CON-PAP-A4', 'CON-INK-01', 'CON-PEN-01', 'CON-BAT-AA']);
+async function runTx<T>(fn: (t: Transaction) => Promise<T>): Promise<T> {
+  const before = { ...snapCount };
+  const touched = new Set<string>();
+  const res = await runTransaction(db, (t) => {
+    touched.clear(); // transactions may retry
+    return fn(trackWrites(t, touched));
+  });
+  await waitForSync(touched, before);
+  return res;
+}
 
-// LocalStorage Helper for Static / GitHub Hosting Fallback
-function getLocalStore() {
-  const deletedSet = getDeletedAssetIds();
-  try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem('WANG_INVENTORY_LOCAL_DB') : null;
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : FALLBACK_SEED.assets;
-      const cleanAssets = rawAssets.filter((a: any) => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
-      const rawConsumables = Array.isArray(parsed.consumables) ? parsed.consumables : [];
-      const cleanConsumables = rawConsumables.filter((c: any) => c && c.itemCode && !LEGACY_DUMMY_CONSUMABLES.has(c.itemCode.toUpperCase()));
+function newBatch(): WriteBatch {
+  const before = { ...snapCount };
+  const touched = new Set<string>();
+  const b = writeBatch(db);
+  const tracked = trackWrites(b, touched);
+  return new Proxy(tracked, {
+    get(target: any, prop) {
+      if (prop === 'commit') {
+        return async () => {
+          await b.commit();
+          await waitForSync(touched, before);
+        };
+      }
+      return target[prop];
+    }
+  });
+}
 
+let sheetsConfigCache: GoogleSheetsSyncConfig | null = null;
+const loaded = new Set<CollectionName>();
+let syncStarted = false;
+let resolveReady: () => void = () => {};
+const readyPromise = new Promise<void>((r) => (resolveReady = r));
+const subscribers = new Set<(p: RealtimeSyncPayload) => void>();
+let lastSyncError: string | null = null;
+
+function derivedEmployees(): Employee[] {
+  const counts = new Map<string, number>();
+  for (const a of cache.assets) {
+    if (a.status === 'Issued' && a.assignedEmployeeId) {
+      counts.set(norm(a.assignedEmployeeId), (counts.get(norm(a.assignedEmployeeId)) || 0) + 1);
+    }
+  }
+  return cache.employees.map((e) => ({ ...e, assignedAssetCount: counts.get(norm(e.employeeId)) || 0 }));
+}
+
+function derivedCategories(): Category[] {
+  const counts = new Map<string, number>();
+  for (const a of cache.assets) counts.set(norm(a.categoryId), (counts.get(norm(a.categoryId)) || 0) + 1);
+  return cache.categories.map((c) => ({ ...c, totalAssets: counts.get(norm(c.categoryId)) || 0 }));
+}
+
+function derivedLocations(): LocationRecord[] {
+  return cache.locations.map((l) => ({ ...l, assetCount: cache.assets.filter((a) => assetInLocation(a, l)).length }));
+}
+
+function payloadFor(name: CollectionName): RealtimeSyncPayload {
+  switch (name) {
+    case 'assets':
       return {
-        user: parsed.user || FALLBACK_SEED.user,
-        categories: Array.isArray(parsed.categories) ? parsed.categories : FALLBACK_SEED.categories,
-        employees: Array.isArray(parsed.employees) ? parsed.employees : FALLBACK_SEED.employees,
-        locations: Array.isArray(parsed.locations) ? parsed.locations : FALLBACK_SEED.locations,
-        assets: cleanAssets,
-        consumables: cleanConsumables,
-        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : FALLBACK_SEED.transactions,
-        requests: Array.isArray(parsed.requests) ? parsed.requests : [],
-        maintenance: Array.isArray(parsed.maintenance) ? parsed.maintenance : [],
-        audits: Array.isArray(parsed.audits) ? parsed.audits : [],
-        activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
-        sheetsConfig: parsed.sheetsConfig || FALLBACK_SEED.sheetsConfig
+        assets: [...cache.assets],
+        employees: derivedEmployees(),
+        categories: derivedCategories(),
+        locations: derivedLocations()
       };
+    case 'employees':
+      return { employees: derivedEmployees() };
+    case 'categories':
+      return { categories: derivedCategories() };
+    case 'locations':
+      return { locations: derivedLocations() };
+    default:
+      return { [name]: [...(cache[name] as any[])] } as RealtimeSyncPayload;
+  }
+}
+
+function startSync() {
+  if (syncStarted) return;
+  syncStarted = true;
+  // If the device is offline and has no local cache yet, don't block the UI forever.
+  setTimeout(resolveReady, 8000);
+
+  ensureFirebaseAuth().finally(() => {
+    for (const name of COLLECTIONS) {
+      onSnapshot(
+        collection(db, name),
+        (snap) => {
+          const list = snap.docs.map((d) => normalizers[name]({ ...d.data() })) as any[];
+          const sorter = sorters[name] as any;
+          if (sorter) list.sort(sorter);
+          (cache as any)[name] = list;
+          snapCount[name] = (snapCount[name] || 0) + 1;
+          const waiters = snapWaiters;
+          snapWaiters = [];
+          waiters.forEach((r) => r());
+          loaded.add(name);
+          lastSyncError = null;
+          if (loaded.size === COLLECTIONS.length) resolveReady();
+          const payload = payloadFor(name);
+          subscribers.forEach((cb) => cb(payload));
+        },
+        (err) => {
+          console.error(`[Firestore] ${name} listener failed:`, err);
+          lastSyncError = err?.message || String(err);
+          loaded.add(name);
+          if (loaded.size === COLLECTIONS.length) resolveReady();
+        }
+      );
     }
-  } catch (e) {
-    console.warn('Failed to parse localStorage, resetting to template seed', e);
-  }
-  const defaultAssets = FALLBACK_SEED.assets.filter((a: any) => !deletedSet.has(a.assetId.toUpperCase()));
-  const defaultStore = JSON.parse(JSON.stringify(FALLBACK_SEED));
-  defaultStore.assets = defaultAssets;
-  defaultStore.consumables = [];
-  return defaultStore;
+    onSnapshot(
+      doc(db, 'systemSettings', 'sheetsConfig'),
+      (snap) => {
+        sheetsConfigCache = snap.exists() ? (snap.data() as GoogleSheetsSyncConfig) : null;
+      },
+      () => {}
+    );
+  });
 }
 
-function saveLocalStore(data: any) {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('WANG_INVENTORY_LOCAL_DB', JSON.stringify(data));
-    }
-  } catch (e) {}
+async function ready() {
+  startSync();
+  await readyPromise;
 }
 
-const isStaticHosting = typeof window !== 'undefined' && (
-  window.location.hostname.endsWith('github.io') || 
-  window.location.hostname.endsWith('pages.dev') ||
-  window.location.hostname.includes('cloudflare') ||
-  window.location.protocol === 'file:'
-);
+// ---------------------------------------------------------------------------
+// Write helpers
+// ---------------------------------------------------------------------------
 
-async function safeFetch<T>(endpoint: string, options?: RequestInit): Promise<T | null> {
-  if (isStaticHosting) {
-    // Immediate return on GitHub Pages without failing 404 network requests
-    return null;
-  }
-  try {
-    const res = await fetch(`${BASE_URL}${endpoint}`, options);
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    // Backend API not reachable -> Use localStorage fallback
-    return null;
+type Writer = Transaction | WriteBatch;
+
+function makeLog(action: string, recordType: ActivityLog['recordType'], recordId: string, details: string): ActivityLog {
+  const u = currentUser();
+  return {
+    logId: uniqueId('LOG'),
+    timestamp: nowIso(),
+    userId: u.userId,
+    userName: u.name,
+    userRole: u.role,
+    action,
+    recordType,
+    recordId,
+    details
+  };
+}
+
+function makeTx(
+  asset: Pick<Asset, 'assetId' | 'itemName' | 'condition'>,
+  type: TransactionType,
+  previousStatus: AssetStatus,
+  newStatus: AssetStatus,
+  extra: Partial<AssetTransaction> = {}
+): AssetTransaction {
+  const u = currentUser();
+  return {
+    transactionId: uniqueId('TX'),
+    assetId: asset.assetId,
+    assetName: asset.itemName,
+    employeeId: '',
+    employeeName: '',
+    transactionType: type,
+    performedByUserId: u.userId,
+    performedByName: u.name,
+    timestamp: nowIso(),
+    previousStatus,
+    newStatus,
+    condition: asset.condition,
+    notes: '',
+    ...extra
+  };
+}
+
+function writeLog(w: Writer, log: ActivityLog) {
+  (w as any).set(doc(db, 'activityLogs', log.logId), log);
+}
+function writeTx(w: Writer, tx: AssetTransaction) {
+  (w as any).set(doc(db, 'transactions', tx.transactionId), tx);
+}
+
+/** Runs many writes in batches of <=450 (Firestore limit is 500 per batch). */
+async function commitInChunks(ops: Array<(b: WriteBatch) => void>) {
+  for (let i = 0; i < ops.length; i += 450) {
+    const b = newBatch();
+    ops.slice(i, i + 450).forEach((op) => op(b));
+    await b.commit();
   }
 }
+
+async function readAssetInTx(t: Transaction, assetId: string): Promise<Asset> {
+  const id = norm(assetId);
+  if (!id) throw new Error('Asset ID is required.');
+  // Document IDs are stored uppercase, but tolerate older mixed-case IDs.
+  const cached = cache.assets.find((a) => same(a.assetId, id));
+  const ref = doc(db, 'assets', cached ? cached.assetId : id);
+  const snap = await t.get(ref);
+  if (!snap.exists()) throw new Error(`Asset ${id} was not found in the register.`);
+  return normalizers.assets(snap.data());
+}
+
+function findEmployee(id: string): Employee | undefined {
+  return cache.employees.find((e) => same(e.employeeId, id));
+}
+
+const AUDIT_CONDITIONS: AssetCondition[] = ['New', 'Good', 'Fair', 'Minor Wear', 'Needs Repair', 'Damaged'];
+
+function warrantyStatusFor(asset?: Asset): string {
+  if (!asset?.warrantyExpiry) return 'Unknown';
+  return asset.warrantyExpiry >= todayStr() ? 'Under Warranty' : 'Out of Warranty';
+}
+
+function computeStats(): DashboardStats {
+  const assets = cache.assets;
+  const count = (f: (a: Asset) => boolean) => assets.filter(f).length;
+  const dist = (key: (a: Asset) => string) => {
+    const m = new Map<string, number>();
+    for (const a of assets) m.set(key(a) || 'Unspecified', (m.get(key(a) || 'Unspecified') || 0) + 1);
+    return Array.from(m.entries());
+  };
+  const today = todayStr();
+  return {
+    totalAssets: assets.length,
+    availableAssets: count((a) => a.status === 'Available'),
+    issuedAssets: count((a) => a.status === 'Issued'),
+    underMaintenanceAssets: count((a) => a.status === 'Under Maintenance'),
+    missingLostAssets: count((a) => a.status === 'Missing' || a.status === 'Lost'),
+    retiredAssets: count((a) => a.status === 'Retired' || a.status === 'Archived'),
+    overdueAssetsCount: count((a) => a.status === 'Issued' && !!a.dueDate && a.dueDate < today),
+    totalConsumableStock: cache.consumables.reduce((s, c) => s + c.currentStock, 0),
+    lowStockItemsCount: cache.consumables.filter((c) => c.currentStock <= c.minimumThreshold).length,
+    pendingRequestsCount: cache.requests.filter((r) => r.status === 'Pending').length,
+    activeAuditsCount: cache.audits.filter((a) => a.status === 'In Progress').length,
+    categoryDistribution: dist((a) => a.categoryName).map(([category, c]) => ({ category, count: c })),
+    conditionDistribution: dist((a) => a.condition).map(([condition, c]) => ({ condition, count: c })),
+    statusDistribution: dist((a) => a.status).map(([status, c]) => ({ status, count: c })),
+    recentTransactions: cache.transactions.slice(0, 8)
+  };
+}
+
+function nextSequential(prefix: string, ids: string[], pad = 3): string {
+  const re = new RegExp(`^${prefix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(\\d+)$`, 'i');
+  let max = 0;
+  for (const id of ids) {
+    const m = re.exec(id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(pad, '0')}`;
+}
+
+function normalizeCategoryId(id: string): string {
+  const c = norm(id).replace(/\s+/g, '-');
+  if (!c) return '';
+  return c.startsWith('CAT-') ? c : `CAT-${c}`;
+}
+
+function csvCell(v: unknown) {
+  return str(v);
+}
+
+// ---------------------------------------------------------------------------
+// Public API (method names and shapes are used by the views)
+// ---------------------------------------------------------------------------
 
 export const api = {
+  // ----- session -----
   getInitialUser(): UserSession {
-    return getLocalStore().user;
+    startSync();
+    return readSession() || FALLBACK_USER;
   },
 
   getInitialStats(): DashboardStats {
-    const store = getLocalStore();
-    const assets: Asset[] = store.assets || [];
-    const totalAssets = assets.length;
-    const availableAssets = assets.filter(a => a.status === 'Available').length;
-    const issuedAssets = assets.filter(a => a.status === 'Issued').length;
-    const underMaintenanceAssets = assets.filter(a => a.status === 'Under Maintenance').length;
-    const missingLostAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost').length;
-    const retiredAssets = assets.filter(a => a.status === 'Retired' || a.status === 'Archived').length;
+    startSync();
+    return computeStats();
+  },
 
-    const catMap = new Map<string, number>();
-    for (const a of assets) {
-      catMap.set(a.categoryName, (catMap.get(a.categoryName) || 0) + 1);
-    }
-    const categoryDistribution = Array.from(catMap.entries()).map(([category, count]) => ({ category, count }));
-    const condMap = new Map<string, number>();
-    for (const a of assets) {
-      condMap.set(a.condition, (condMap.get(a.condition) || 0) + 1);
-    }
-    const conditionDistribution = Array.from(condMap.entries()).map(([condition, count]) => ({ condition, count }));
-    const statusMap = new Map<string, number>();
-    for (const a of assets) {
-      statusMap.set(a.status, (statusMap.get(a.status) || 0) + 1);
-    }
-    const statusDistribution = Array.from(statusMap.entries()).map(([status, count]) => ({ status, count }));
-
-    return {
-      totalAssets,
-      availableAssets,
-      issuedAssets,
-      underMaintenanceAssets,
-      missingLostAssets,
-      retiredAssets,
-      overdueAssetsCount: assets.filter(a => a.status === 'Issued' && a.dueDate && new Date(a.dueDate) < new Date()).length,
-      totalConsumableStock: (store.consumables || []).reduce((acc: number, c: any) => acc + (c.currentStock || 0), 0),
-      lowStockItemsCount: (store.consumables || []).filter((c: any) => (c.currentStock || 0) <= (c.minimumThreshold || 0)).length,
-      pendingRequestsCount: (store.requests || []).filter((r: any) => r.status === 'Pending').length,
-      activeAuditsCount: (store.audits || []).filter((a: any) => a.status === 'In Progress').length,
-      categoryDistribution,
-      conditionDistribution,
-      statusDistribution,
-      recentTransactions: (store.transactions || []).slice(0, 8)
-    };
+  getSyncError(): string | null {
+    return lastSyncError;
   },
 
   async getCurrentUser(): Promise<UserSession> {
-    const data = await safeFetch<{ success: boolean; user: UserSession }>('/auth/current-user');
-    if (data && data.success) return data.user;
-    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
-    const fireUser = await fetchUserFromFirestore();
-    if (fireUser) {
-      const store = getLocalStore();
-      store.user = fireUser;
-      saveLocalStore(store);
-      return fireUser;
+    await ready();
+    const s = readSession();
+    if (s) {
+      // Keep the session in step with the employee record (name/role edits).
+      const e = s.employeeId ? findEmployee(s.employeeId) : undefined;
+      if (e) {
+        const refreshed = { ...sessionFromEmployee(e), role: e.role || s.role };
+        writeSession(refreshed);
+        return refreshed;
+      }
+      return s;
     }
-    return getLocalStore().user;
+    const u = currentUser();
+    writeSession(u);
+    return u;
   },
 
-  async switchRole(role: UserRole, employeeId?: string, name?: string): Promise<UserSession> {
-    const data = await safeFetch<{ success: boolean; user: UserSession }>('/auth/switch-role', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, employeeId, name })
-    });
-    if (data && data.success) return data.user;
-    const store = getLocalStore();
-    store.user.role = role;
-    if (name) store.user.name = name;
-    if (employeeId) store.user.employeeId = employeeId;
-    const target = store.employees.find((e: any) => (employeeId && e.employeeId === employeeId) || e.role === role);
-    if (target) {
-      store.user.name = target.fullName;
-      store.user.email = target.email;
-      store.user.employeeId = target.employeeId;
-      store.user.officeBranch = target.officeBranch;
-    }
-    saveLocalStore(store);
-    saveUserToFirestore(store.user).catch(() => {});
-    return store.user;
+  async switchRole(role: UserRole, employeeId?: string, _name?: string): Promise<UserSession> {
+    await ready();
+    const emp =
+      (employeeId && findEmployee(employeeId)) ||
+      cache.employees.find((e) => e.role === role && e.activeStatus) ||
+      (role === 'Inventory Manager' ? cache.employees.find((e) => e.role === 'Inventory & Finance Admin') : undefined);
+    const u: UserSession = emp ? sessionFromEmployee(emp, role) : { ...FALLBACK_USER, role };
+    writeSession(u);
+    return u;
   },
 
   async getDashboardStats(): Promise<DashboardStats> {
-    const data = await safeFetch<{ success: boolean; stats: DashboardStats }>('/stats/dashboard');
-    if (data && data.success) return data.stats;
-    const store = getLocalStore();
-    const assets: Asset[] = store.assets;
-    const totalAssets = assets.length;
-    const availableAssets = assets.filter(a => a.status === 'Available').length;
-    const issuedAssets = assets.filter(a => a.status === 'Issued').length;
-    const underMaintenanceAssets = assets.filter(a => a.status === 'Under Maintenance').length;
-    const missingLostAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost').length;
-    const retiredAssets = assets.filter(a => a.status === 'Retired' || a.status === 'Archived').length;
-
-    const catMap = new Map<string, number>();
-    for (const a of assets) {
-      catMap.set(a.categoryName, (catMap.get(a.categoryName) || 0) + 1);
-    }
-    const categoryDistribution = Array.from(catMap.entries()).map(([category, count]) => ({ category, count }));
-    const condMap = new Map<string, number>();
-    for (const a of assets) {
-      condMap.set(a.condition, (condMap.get(a.condition) || 0) + 1);
-    }
-    const conditionDistribution = Array.from(condMap.entries()).map(([condition, count]) => ({ condition, count }));
-    const statusMap = new Map<string, number>();
-    for (const a of assets) {
-      statusMap.set(a.status, (statusMap.get(a.status) || 0) + 1);
-    }
-    const statusDistribution = Array.from(statusMap.entries()).map(([status, count]) => ({ status, count }));
-
-    return {
-      totalAssets,
-      availableAssets,
-      issuedAssets,
-      underMaintenanceAssets,
-      missingLostAssets,
-      retiredAssets,
-      overdueAssetsCount: assets.filter(a => a.status === 'Issued' && a.dueDate && new Date(a.dueDate) < new Date()).length,
-      totalConsumableStock: store.consumables.reduce((acc: number, c: any) => acc + c.currentStock, 0),
-      lowStockItemsCount: store.consumables.filter((c: any) => c.currentStock <= c.minimumThreshold).length,
-      pendingRequestsCount: store.requests.filter((r: any) => r.status === 'Pending').length,
-      activeAuditsCount: store.audits.filter((a: any) => a.status === 'In Progress').length,
-      categoryDistribution,
-      conditionDistribution,
-      statusDistribution,
-      recentTransactions: store.transactions.slice(0, 8)
-    };
+    await ready();
+    return computeStats();
   },
 
-  async getAssets(filters?: {
-    search?: string;
-    category?: string;
-    status?: string;
-    condition?: string;
-    location?: string;
-    employeeId?: string;
-    completion?: string;
-  }): Promise<Asset[]> {
-    const query = new URLSearchParams();
-    if (filters) {
-      Object.entries(filters).forEach(([k, v]) => {
-        if (v && v !== 'all') query.set(k, v);
-      });
+  // ----- assets -----
+  async getAssets(filters?: { search?: string; category?: string; status?: string }): Promise<Asset[]> {
+    await ready();
+    let list = [...cache.assets];
+    if (filters?.search) {
+      const q = filters.search.trim().toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.assetId.toLowerCase().includes(q) ||
+          a.itemName.toLowerCase().includes(q) ||
+          a.brand.toLowerCase().includes(q) ||
+          a.serialNumber.toLowerCase().includes(q)
+      );
     }
-    const data = await safeFetch<{ success: boolean; assets: Asset[] }>(`/assets?${query.toString()}`);
-    const deletedSet = getDeletedAssetIds();
-
-    if (data && data.success) {
-      // Filter out any locally blacklisted deleted asset
-      const cleanServerAssets = data.assets.filter(a => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
-      return cleanServerAssets;
-    }
-
-    // Check Cloud Firestore for live multi-device sync
-    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
-    const cloudAssets = await fetchAllAssetsFromFirestore();
-    let list: Asset[] = cloudAssets && cloudAssets.length > 0 ? cloudAssets : getLocalStore().assets;
-
-    // Filter cloud assets with deleted blacklist
-    list = list.filter(a => a && a.assetId && !deletedSet.has(a.assetId.toUpperCase()));
-
-    if (cloudAssets && cloudAssets.length > 0) {
-      const store = getLocalStore();
-      store.assets = list;
-      saveLocalStore(store);
-    }
-
-    if (filters) {
-      if (filters.search) {
-        const q = filters.search.trim().toLowerCase();
-        list = list.filter(a => a.assetId.toLowerCase().includes(q) || a.itemName.toLowerCase().includes(q) || a.brand.toLowerCase().includes(q));
-      }
-      if (filters.category && filters.category !== 'all') {
-        list = list.filter(a => a.categoryId === filters.category);
-      }
-      if (filters.status && filters.status !== 'all') {
-        list = list.filter(a => a.status === filters.status);
-      }
-    }
+    if (filters?.category && filters.category !== 'all') list = list.filter((a) => same(a.categoryId, filters.category));
+    if (filters?.status && filters.status !== 'all') list = list.filter((a) => a.status === filters.status);
     return list;
   },
 
   async getAssetById(id: string): Promise<{ asset: Asset; transactions: AssetTransaction[] }> {
-    const data = await safeFetch<{ success: boolean; asset: Asset; transactions: AssetTransaction[] }>(`/assets/${encodeURIComponent(id)}`);
-    if (data && data.success) return { asset: data.asset, transactions: data.transactions };
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === id.trim().toUpperCase());
-    if (!asset) throw new Error('Asset not found');
-    const transactions = store.transactions.filter((t: any) => t.assetId.toUpperCase() === id.trim().toUpperCase());
-    return { asset, transactions };
+    await ready();
+    const asset = cache.assets.find((a) => same(a.assetId, id));
+    if (!asset) throw new Error(`Asset ${norm(id)} is not registered.`);
+    const transactions = cache.transactions.filter((t) => same(t.assetId, asset.assetId));
+    return { asset: { ...asset }, transactions };
   },
 
-  async createAsset(asset: Partial<Asset>): Promise<{ asset: Asset; message: string }> {
-    const targetId = (asset.assetId || '').trim().toUpperCase();
-    if (targetId) {
-      removeDeletedAssetId(targetId);
+  suggestAssetId(categoryId: string): string {
+    const code = norm(categoryId).replace(/^CAT-/, '') || 'GEN';
+    return nextSequential(`WANG-${code}-`, cache.assets.map((a) => a.assetId));
+  },
+
+  async createAsset(input: Partial<Asset>): Promise<{ asset: Asset; message: string }> {
+    requireRole(MANAGER_ROLES, 'register assets');
+    await ready();
+    if (!str(input.itemName).trim()) throw new Error('Item name is required.');
+    const category = cache.categories.find((c) => same(c.categoryId, input.categoryId));
+    if (!category) throw new Error('Please select a valid category.');
+
+    const assetId = norm(input.assetId) || api.suggestAssetId(category.categoryId);
+    if (!/^[A-Z0-9][A-Z0-9\-_/.]{0,60}$/.test(assetId)) {
+      throw new Error('Asset ID may only contain letters, numbers and - _ / .');
     }
-    const data = await safeFetch<{ success: boolean; asset: Asset; message: string }>(`/assets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(asset)
+
+    let status: AssetStatus = (input.status as AssetStatus) || 'Available';
+    let employee: Employee | undefined;
+    if (status === 'Issued') {
+      employee = input.assignedEmployeeId ? findEmployee(input.assignedEmployeeId) : undefined;
+      if (!employee) throw new Error('To register an asset as Issued, select the employee who holds it.');
+    }
+    if (status === 'Missing' || status === 'Lost') {
+      throw new Error('A new asset cannot be registered as Missing or Lost.');
+    }
+
+    const ts = nowIso();
+    const asset: Asset = normalizers.assets({
+      ...input,
+      assetId,
+      categoryId: category.categoryId,
+      categoryName: category.categoryName,
+      itemName: str(input.itemName).trim(),
+      quantity: Math.max(1, num(input.quantity, 1)),
+      purchaseCost: Math.max(0, num(input.purchaseCost)),
+      status,
+      assignedEmployeeId: employee ? employee.employeeId : '',
+      assignedTo: employee ? employee.fullName : '',
+      dueDate: employee ? str(input.dueDate) : '',
+      createdAt: ts,
+      lastUpdated: ts
     });
-    const store = getLocalStore();
-    const newAsset: Asset = data && data.success && data.asset ? data.asset : {
-      assetId: targetId || 'WANG-GEN-001',
-      categoryId: asset.categoryId || 'CAT-ITC',
-      categoryName: asset.categoryName || 'IT & Computing',
-      itemName: asset.itemName || 'Unregistered Asset',
-      brand: asset.brand || '',
-      model: asset.model || '',
-      serialNumber: asset.serialNumber || '',
-      quantity: 1,
-      unit: asset.unit || 'Unit',
-      purchaseDate: asset.purchaseDate || new Date().toISOString().split('T')[0],
-      purchaseCost: Number(asset.purchaseCost) || 0,
-      supplier: asset.supplier || '',
-      officeBranch: asset.officeBranch || 'Head Office - Islamabad',
-      buildingRoom: asset.buildingRoom || 'Central Store - Bay A',
-      assignedEmployeeId: asset.assignedEmployeeId || '',
-      assignedTo: asset.assignedTo || '',
-      condition: asset.condition || 'Good',
-      status: asset.status || 'Available',
-      warrantyExpiry: asset.warrantyExpiry || '',
-      invoiceDocLink: asset.invoiceDocLink || '',
-      remarks: asset.remarks || '',
-      recordCompletion: asset.recordCompletion || 'Complete',
-      createdAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString()
-    };
-    if (newAsset.assetId) {
-      removeDeletedAssetId(newAsset.assetId);
+
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'assets', assetId);
+        if ((await t.get(ref)).exists()) throw new Error(`Asset ID ${assetId} already exists. Use a different ID.`);
+        t.set(ref, asset);
+        writeTx(
+          t,
+          makeTx(asset, employee ? 'ISSUE' : 'INITIAL_IMPORT', 'Available', status, {
+            employeeId: asset.assignedEmployeeId,
+            employeeName: asset.assignedTo,
+            location: asset.buildingRoom,
+            notes: employee ? `Registered and issued to ${employee.fullName}` : 'Asset registered'
+          })
+        );
+        writeLog(t, makeLog('REGISTER_ASSET', 'Asset', assetId, `New asset ${assetId} (${asset.itemName}) registered in "${asset.categoryName}".`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to register asset.');
     }
-    store.assets = store.assets.filter((a: any) => a.assetId.toUpperCase() !== newAsset.assetId.toUpperCase());
-    store.assets.unshift(newAsset);
-
-    // 1. Cross-section: Update category totalAssets
-    const targetCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === newAsset.categoryId.toUpperCase());
-    if (targetCat) {
-      targetCat.totalAssets = (targetCat.totalAssets || 0) + 1;
-      saveCategoryToFirestore(targetCat).catch(() => {});
-    }
-
-    // 2. Cross-section: Update location assetCount
-    const targetLoc = store.locations.find((l: any) => 
-      l.room && newAsset.buildingRoom && (l.room === newAsset.buildingRoom || newAsset.buildingRoom.includes(l.room))
-    );
-    if (targetLoc) {
-      targetLoc.assetCount = (targetLoc.assetCount || 0) + 1;
-      saveLocationToFirestore(targetLoc).catch(() => {});
-    }
-
-    // 3. Cross-section: If assigned to employee at creation, update employee count
-    if (newAsset.assignedEmployeeId && newAsset.status === 'Issued') {
-      const targetEmp = store.employees.find((e: any) => e.employeeId === newAsset.assignedEmployeeId);
-      if (targetEmp) {
-        targetEmp.assignedAssetCount = (targetEmp.assignedAssetCount || 0) + 1;
-        saveEmployeeToFirestore(targetEmp).catch(() => {});
-      }
-    }
-
-    // 4. Create ActivityLog
-    const regLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'REGISTER_ASSET',
-      recordType: 'Asset',
-      recordId: newAsset.assetId,
-      details: `New asset ${newAsset.assetId} (${newAsset.itemName}) registered in category "${newAsset.categoryName}".`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(regLog);
-    saveActivityLogToFirestore(regLog).catch(() => {});
-
-    saveLocalStore(store);
-    saveAssetToFirestore(newAsset).catch(() => {});
-    if (data && data.success) return data;
-    return { asset: newAsset, message: 'Asset registered successfully' };
+    return { asset, message: `Asset ${assetId} registered successfully` };
   },
 
   async updateAsset(id: string, updates: Partial<Asset>): Promise<{ asset: Asset; message: string }> {
-    const cleanId = (id || '').trim().toUpperCase();
-    if (cleanId) {
-      removeDeletedAssetId(cleanId);
+    requireRole(MANAGER_ROLES, 'edit assets');
+    await ready();
+    let saved!: Asset;
+    try {
+      await runTx(async (t) => {
+        const current = await readAssetInTx(t, id);
+        const next: Asset = { ...current };
+
+        // Plain descriptive fields
+        const editable: (keyof Asset)[] = [
+          'itemName', 'brand', 'model', 'serialNumber', 'unit', 'purchaseDate', 'supplier',
+          'officeBranch', 'buildingRoom', 'condition', 'warrantyExpiry', 'invoiceDocLink',
+          'remarks', 'recordCompletion', 'isConsumable'
+        ];
+        for (const k of editable) if (updates[k] !== undefined) (next as any)[k] = updates[k];
+        if (updates.quantity !== undefined) next.quantity = Math.max(1, num(updates.quantity, 1));
+        if (updates.purchaseCost !== undefined) next.purchaseCost = Math.max(0, num(updates.purchaseCost));
+        if (updates.dueDate !== undefined && current.status === 'Issued') next.dueDate = updates.dueDate;
+        if (!str(next.itemName).trim()) throw new Error('Item name is required.');
+
+        if (updates.categoryId && !same(updates.categoryId, current.categoryId)) {
+          const cat = cache.categories.find((c) => same(c.categoryId, updates.categoryId));
+          if (!cat) throw new Error('Selected category does not exist.');
+          next.categoryId = cat.categoryId;
+          next.categoryName = cat.categoryName;
+        }
+
+        // Status changes through the edit form are limited; custody changes must
+        // go through Issue / Return / Missing workflows so history stays correct.
+        if (updates.status && updates.status !== current.status) {
+          const locked: AssetStatus[] = ['Issued', 'Missing', 'Lost'];
+          if (locked.includes(current.status)) {
+            throw new Error(`This asset is ${current.status}. Use the ${current.status === 'Issued' ? 'Return' : 'Resolve'} action to change its status.`);
+          }
+          if (locked.includes(updates.status)) {
+            throw new Error(`Use the ${updates.status === 'Issued' ? 'Issue' : 'Report Missing'} action to set status "${updates.status}".`);
+          }
+          next.status = updates.status;
+        }
+
+        next.lastUpdated = nowIso();
+        t.set(doc(db, 'assets', current.assetId), next);
+
+        if (next.status !== current.status || next.condition !== current.condition) {
+          writeTx(
+            t,
+            makeTx(next, next.status === 'Retired' ? 'RETIRED' : 'CONDITION_CHANGE', current.status, next.status, {
+              notes: `Edited: status ${current.status} → ${next.status}, condition ${current.condition} → ${next.condition}`
+            })
+          );
+        }
+        if (next.buildingRoom !== current.buildingRoom || next.officeBranch !== current.officeBranch) {
+          writeTx(
+            t,
+            makeTx(next, 'TRANSFER', current.status, next.status, {
+              employeeId: next.assignedEmployeeId,
+              employeeName: next.assignedTo,
+              location: next.buildingRoom,
+              notes: `Location changed from ${current.buildingRoom || '—'} to ${next.buildingRoom || '—'}`
+            })
+          );
+        }
+        writeLog(t, makeLog('UPDATE_ASSET', 'Asset', current.assetId, `Asset ${current.assetId} (${next.itemName}) details updated.`));
+        saved = next;
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update asset.');
     }
-    const data = await safeFetch<{ success: boolean; asset: Asset; message: string }>(`/assets/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === id.toUpperCase());
-    if (asset) {
-      const oldCat = asset.categoryId;
-      const oldRoom = asset.buildingRoom;
-
-      Object.assign(asset, updates, { lastUpdated: new Date().toISOString() });
-
-      // If category changed, update category totals
-      if (updates.categoryId && updates.categoryId !== oldCat) {
-        const prevCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === oldCat.toUpperCase());
-        if (prevCat && prevCat.totalAssets > 0) {
-          prevCat.totalAssets = Math.max(0, prevCat.totalAssets - 1);
-          saveCategoryToFirestore(prevCat).catch(() => {});
-        }
-        const nextCat = store.categories.find((c: any) => c.categoryId.toUpperCase() === updates.categoryId!.toUpperCase());
-        if (nextCat) {
-          nextCat.totalAssets = (nextCat.totalAssets || 0) + 1;
-          saveCategoryToFirestore(nextCat).catch(() => {});
-        }
-      }
-
-      // If location changed, update location counts
-      if (updates.buildingRoom && updates.buildingRoom !== oldRoom) {
-        const prevLoc = store.locations.find((l: any) => l.room && oldRoom && (l.room === oldRoom || oldRoom.includes(l.room)));
-        if (prevLoc && prevLoc.assetCount > 0) {
-          prevLoc.assetCount = Math.max(0, prevLoc.assetCount - 1);
-          saveLocationToFirestore(prevLoc).catch(() => {});
-        }
-        const nextLoc = store.locations.find((l: any) => l.room && updates.buildingRoom && (l.room === updates.buildingRoom || updates.buildingRoom.includes(l.room)));
-        if (nextLoc) {
-          nextLoc.assetCount = (nextLoc.assetCount || 0) + 1;
-          saveLocationToFirestore(nextLoc).catch(() => {});
-        }
-      }
-
-      saveLocalStore(store);
-      saveAssetToFirestore(asset).catch(() => {});
-    }
-    if (data && data.success) return data;
-    if (!asset) throw new Error('Asset not found');
-    return { asset, message: 'Asset updated successfully' };
+    return { asset: saved, message: 'Asset updated successfully' };
   },
 
   async deleteAsset(id: string): Promise<{ success: boolean; message: string }> {
-    const cleanId = id.trim().toUpperCase();
-
-    // 1. Blacklist permanently in localStorage so it can never resurrect
-    addDeletedAssetIds([cleanId]);
-
-    // 2. Remove from local store immediately
-    const store = getLocalStore();
-    const idx = store.assets.findIndex((a: any) => a.assetId.toUpperCase() === cleanId);
-    let removedAsset: Asset | undefined;
-    if (idx !== -1) {
-      removedAsset = store.assets.splice(idx, 1)[0];
-
-      if (removedAsset) {
-        // Cross-section: Decrement category count
-        if (removedAsset.categoryId) {
-          const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === removedAsset!.categoryId.toUpperCase());
-          if (cat && cat.totalAssets > 0) {
-            cat.totalAssets = Math.max(0, cat.totalAssets - 1);
-            saveCategoryToFirestore(cat).catch(() => {});
-          }
-        }
-
-        // Cross-section: Decrement location count
-        if (removedAsset.buildingRoom) {
-          const loc = store.locations.find((l: any) => l.room && removedAsset!.buildingRoom && (l.room === removedAsset!.buildingRoom || removedAsset!.buildingRoom.includes(l.room)));
-          if (loc && loc.assetCount > 0) {
-            loc.assetCount = Math.max(0, loc.assetCount - 1);
-            saveLocationToFirestore(loc).catch(() => {});
-          }
-        }
-
-        // Cross-section: Decrement employee assigned count if issued
-        if (removedAsset.assignedEmployeeId && removedAsset.status === 'Issued') {
-          const emp = store.employees.find((e: any) => e.employeeId === removedAsset!.assignedEmployeeId);
-          if (emp && emp.assignedAssetCount > 0) {
-            emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
-            saveEmployeeToFirestore(emp).catch(() => {});
-          }
-        }
-      }
-
-      const delLog: ActivityLog = {
-        logId: `LOG-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        userId: store.user.userId,
-        userName: store.user.name,
-        userRole: store.user.role,
-        action: 'DELETE_ASSET',
-        recordType: 'Asset',
-        recordId: cleanId,
-        details: `Deleted asset ${removedAsset ? removedAsset.itemName : cleanId} (${cleanId})`
-      };
-
-      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-      store.activityLogs.unshift(delLog);
-      saveActivityLogToFirestore(delLog).catch(() => {});
-      saveLocalStore(store);
-    }
-
-    // 3. Await Cloud Firestore deletion so getAssets won't resurrect it
+    requireRole(MANAGER_ROLES, 'delete assets');
+    await ready();
     try {
-      await deleteAssetFromFirestore(cleanId);
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, id);
+        if (a.status === 'Issued') throw new Error(`${a.assetId} is issued to ${a.assignedTo}. Return it before deleting.`);
+        t.delete(doc(db, 'assets', a.assetId));
+        writeLog(t, makeLog('DELETE_ASSET', 'Asset', a.assetId, `Deleted asset ${a.itemName} (${a.assetId}).`));
+      });
     } catch (e) {
-      console.warn('[Firestore] Note on deleteAsset:', e);
+      throw friendlyError(e, 'Failed to delete asset.');
     }
-
-    // 4. Delete from backend server if running
-    const data = await safeFetch<{ success: boolean; message: string }>(`/assets/${encodeURIComponent(cleanId)}`, {
-      method: 'DELETE'
-    });
-
-    if (data && data.success) return data;
-    return { success: true, message: `Asset ${cleanId} permanently deleted` };
+    return { success: true, message: `Asset ${norm(id)} deleted` };
   },
 
   async deleteMultipleAssets(ids: string[]): Promise<{ success: boolean; message: string; deletedCount: number }> {
-    const cleanIds = ids.map(id => id.trim().toUpperCase());
-
-    // 1. Blacklist permanently in localStorage
-    addDeletedAssetIds(cleanIds);
-
-    // 2. Remove from local store and adjust linked entities
-    const store = getLocalStore();
-    const beforeCount = store.assets.length;
-    const toDelete = store.assets.filter((a: any) => cleanIds.includes(a.assetId.toUpperCase()));
-    store.assets = store.assets.filter((a: any) => !cleanIds.includes(a.assetId.toUpperCase()));
-    const deletedCount = beforeCount - store.assets.length;
-
-    // Cross-section updates for all deleted items
-    for (const rem of toDelete) {
-      if (rem.categoryId) {
-        const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === rem.categoryId.toUpperCase());
-        if (cat && cat.totalAssets > 0) {
-          cat.totalAssets = Math.max(0, cat.totalAssets - 1);
-          saveCategoryToFirestore(cat).catch(() => {});
-        }
-      }
-      if (rem.buildingRoom) {
-        const loc = store.locations.find((l: any) => l.room && rem.buildingRoom && (l.room === rem.buildingRoom || rem.buildingRoom.includes(l.room)));
-        if (loc && loc.assetCount > 0) {
-          loc.assetCount = Math.max(0, loc.assetCount - 1);
-          saveLocationToFirestore(loc).catch(() => {});
-        }
-      }
-      if (rem.assignedEmployeeId && rem.status === 'Issued') {
-        const emp = store.employees.find((e: any) => e.employeeId === rem.assignedEmployeeId);
-        if (emp && emp.assignedAssetCount > 0) {
-          emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
-          saveEmployeeToFirestore(emp).catch(() => {});
-        }
-      }
+    requireRole(MANAGER_ROLES, 'delete assets');
+    await ready();
+    const targets = cache.assets.filter((a) => ids.some((id) => same(id, a.assetId)));
+    const deletable = targets.filter((a) => a.status !== 'Issued');
+    const skipped = targets.length - deletable.length;
+    if (deletable.length === 0) {
+      throw new Error(skipped ? 'All selected assets are currently issued. Return them before deleting.' : 'No matching assets found.');
     }
-
-    const batchLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'BATCH_DELETE_ASSETS',
-      recordType: 'Asset',
-      recordId: cleanIds.join(','),
-      details: `Batch deleted ${deletedCount} assets (${cleanIds.slice(0, 5).join(', ')}${cleanIds.length > 5 ? '...' : ''})`
-    };
-
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(batchLog);
-    saveActivityLogToFirestore(batchLog).catch(() => {});
-    saveLocalStore(store);
-
-    // 3. Await Firestore deletions concurrently
-    await Promise.all(cleanIds.map(id => deleteAssetFromFirestore(id).catch(() => {})));
-
-    // 4. Delete from backend server
-    const data = await safeFetch<any>('/assets/batch-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assetIds: cleanIds })
-    });
-
-    if (data && data.success) return data;
-    return { success: true, message: `Successfully deleted ${deletedCount} assets`, deletedCount };
-  },
-
-  exportFullBackup(): string {
-    const store = getLocalStore();
-    return JSON.stringify(store, null, 2);
-  },
-
-  importFullBackup(jsonContent: string): { success: boolean; message: string } {
+    const ops: Array<(b: WriteBatch) => void> = deletable.map((a) => (b) => b.delete(doc(db, 'assets', a.assetId)));
+    const log = makeLog(
+      'BATCH_DELETE_ASSETS',
+      'Asset',
+      deletable.map((a) => a.assetId).slice(0, 20).join(','),
+      `Deleted ${deletable.length} assets (${deletable.map((a) => a.assetId).slice(0, 5).join(', ')}${deletable.length > 5 ? '…' : ''}).`
+    );
+    ops.push((b) => writeLog(b, log));
     try {
-      const parsed = JSON.parse(jsonContent);
-      if (!parsed || !Array.isArray(parsed.assets)) {
-        throw new Error('Invalid backup file: Missing assets array');
-      }
-      saveLocalStore(parsed);
-      return { success: true, message: `Backup restored with ${parsed.assets.length} assets.` };
-    } catch (err: any) {
-      return { success: false, message: err?.message || 'Failed to parse backup JSON' };
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete assets.');
     }
+    return {
+      success: true,
+      deletedCount: deletable.length,
+      message: `Deleted ${deletable.length} asset(s)${skipped ? `; ${skipped} issued asset(s) skipped - return them first` : ''}.`
+    };
   },
 
+  // ----- custody workflows -----
   async issueAsset(payload: {
     assetId: string;
     employeeId: string;
@@ -1007,65 +883,50 @@ export const api = {
     notes?: string;
     location?: string;
   }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
-    const data = await safeFetch<any>(`/assets/issue`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (data && data.success) return data;
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
-    const emp = store.employees.find((e: any) => e.employeeId === payload.employeeId);
-    if (!asset || !emp) throw new Error('Asset or employee not found');
+    requireRole(MANAGER_ROLES, 'issue assets');
+    await ready();
+    const emp = findEmployee(payload.employeeId);
+    if (!emp) throw new Error('Please select a valid employee.');
+    if (!emp.activeStatus) throw new Error(`${emp.fullName} is marked inactive and cannot receive assets.`);
+    if (payload.dueDate && payload.dueDate < todayStr()) throw new Error('Due date cannot be in the past.');
 
-    asset.status = 'Issued';
-    asset.assignedEmployeeId = emp.employeeId;
-    asset.assignedTo = emp.fullName;
-    if (payload.dueDate) asset.dueDate = payload.dueDate;
-    if (payload.location) asset.buildingRoom = payload.location;
-
-    const tx: AssetTransaction = {
-      transactionId: `TX-${Date.now()}`,
-      assetId: asset.assetId,
-      assetName: asset.itemName,
-      employeeId: emp.employeeId,
-      employeeName: emp.fullName,
-      transactionType: 'ISSUE',
-      performedByUserId: store.user.userId,
-      performedByName: store.user.name,
-      timestamp: new Date().toISOString(),
-      previousStatus: 'Available',
-      newStatus: 'Issued',
-      condition: payload.condition || asset.condition,
-      notes: payload.notes || `Issued to ${emp.fullName}`,
-      dueDate: payload.dueDate
-    };
-    store.transactions.unshift(tx);
-
-    // Update employee assigned asset count
-    emp.assignedAssetCount = (emp.assignedAssetCount || 0) + 1;
-    saveEmployeeToFirestore(emp).catch(() => {});
-
-    // Create activity log
-    const issueLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'ISSUE_ASSET',
-      recordType: 'Asset',
-      recordId: asset.assetId,
-      details: `Asset ${asset.assetId} (${asset.itemName}) was issued to ${emp.fullName} (${emp.employeeId}).`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(issueLog);
-    saveActivityLogToFirestore(issueLog).catch(() => {});
-
-    saveLocalStore(store);
-    saveAssetToFirestore(asset).catch(() => {});
-    saveTransactionToFirestore(tx).catch(() => {});
-    return { success: true, message: `Successfully issued to ${emp.fullName}`, asset, transaction: tx };
+    let result!: { asset: Asset; transaction: AssetTransaction };
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, payload.assetId);
+        if (a.status !== 'Available') {
+          throw new Error(
+            a.status === 'Issued'
+              ? `${a.assetId} is already issued to ${a.assignedTo}. Return it first.`
+              : `${a.assetId} is "${a.status}" and cannot be issued. Only Available assets can be issued.`
+          );
+        }
+        const next: Asset = {
+          ...a,
+          status: 'Issued',
+          assignedEmployeeId: emp.employeeId,
+          assignedTo: emp.fullName,
+          condition: payload.condition || a.condition,
+          dueDate: payload.dueDate || '',
+          buildingRoom: payload.location || a.buildingRoom,
+          lastUpdated: nowIso()
+        };
+        const tx = makeTx(next, 'ISSUE', a.status, 'Issued', {
+          employeeId: emp.employeeId,
+          employeeName: emp.fullName,
+          dueDate: payload.dueDate || undefined,
+          location: next.buildingRoom,
+          notes: payload.notes?.trim() || `Issued to ${emp.fullName}`
+        });
+        t.set(doc(db, 'assets', a.assetId), next);
+        writeTx(t, tx);
+        writeLog(t, makeLog('ISSUE_ASSET', 'Asset', a.assetId, `${a.assetId} (${a.itemName}) issued to ${emp.fullName} (${emp.employeeId}).`));
+        result = { asset: next, transaction: tx };
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to issue asset.');
+    }
+    return { success: true, message: `Issued to ${emp.fullName}`, ...result };
   },
 
   async returnAsset(payload: {
@@ -1074,73 +935,60 @@ export const api = {
     notes?: string;
     targetLocation?: string;
   }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
-    const data = await safeFetch<any>(`/assets/return`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (data && data.success) return data;
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
-    if (!asset) throw new Error('Asset not found');
-
-    const prevEmp = asset.assignedTo;
-    const prevEmpId = asset.assignedEmployeeId;
-    const newStatus = (payload.returnCondition === 'Needs Repair' || payload.returnCondition === 'Damaged') ? 'Under Maintenance' : 'Available';
-
-    asset.status = newStatus;
-    asset.condition = payload.returnCondition;
-    asset.assignedEmployeeId = '';
-    asset.assignedTo = '';
-    asset.dueDate = '';
-    if (payload.targetLocation) asset.buildingRoom = payload.targetLocation;
-
-    const tx: AssetTransaction = {
-      transactionId: `TX-${Date.now()}`,
-      assetId: asset.assetId,
-      assetName: asset.itemName,
-      employeeId: prevEmpId,
-      employeeName: prevEmp,
-      transactionType: 'RETURN',
-      performedByUserId: store.user.userId,
-      performedByName: store.user.name,
-      timestamp: new Date().toISOString(),
-      previousStatus: 'Issued',
-      newStatus: newStatus,
-      condition: payload.returnCondition,
-      notes: payload.notes || `Returned by ${prevEmp || 'Staff'}`
-    };
-    store.transactions.unshift(tx);
-
-    // Decrement previous employee assigned count
-    if (prevEmpId) {
-      const prevEmpObj = store.employees.find((e: any) => e.employeeId === prevEmpId);
-      if (prevEmpObj) {
-        prevEmpObj.assignedAssetCount = Math.max(0, (prevEmpObj.assignedAssetCount || 1) - 1);
-        saveEmployeeToFirestore(prevEmpObj).catch(() => {});
-      }
+    requireRole(MANAGER_ROLES, 'receive returned assets');
+    await ready();
+    let result!: { asset: Asset; transaction: AssetTransaction };
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, payload.assetId);
+        if (a.status !== 'Issued') throw new Error(`${a.assetId} is "${a.status}", not Issued, so it cannot be returned.`);
+        const needsRepair = payload.returnCondition === 'Needs Repair' || payload.returnCondition === 'Damaged';
+        const newStatus: AssetStatus = needsRepair ? 'Under Maintenance' : 'Available';
+        const next: Asset = {
+          ...a,
+          status: newStatus,
+          condition: payload.returnCondition || a.condition,
+          assignedEmployeeId: '',
+          assignedTo: '',
+          dueDate: '',
+          buildingRoom: payload.targetLocation || a.buildingRoom,
+          lastUpdated: nowIso()
+        };
+        const tx = makeTx(next, 'RETURN', 'Issued', newStatus, {
+          employeeId: a.assignedEmployeeId,
+          employeeName: a.assignedTo,
+          location: next.buildingRoom,
+          notes: payload.notes?.trim() || `Returned by ${a.assignedTo || 'staff'}`
+        });
+        t.set(doc(db, 'assets', a.assetId), next);
+        writeTx(t, tx);
+        if (needsRepair) {
+          // Open a repair ticket so the asset can be tracked and released from Maintenance.
+          const ticket: MaintenanceRecord = {
+            maintenanceId: uniqueId('MNT'),
+            assetId: a.assetId,
+            assetName: a.itemName,
+            issueDescription: payload.notes?.trim() || `Returned as "${next.condition}" by ${a.assignedTo || 'staff'}`,
+            reportedDate: todayStr(),
+            serviceProvider: '',
+            repairCost: 0,
+            workPerformed: '',
+            status: 'Reported',
+            warrantyStatus: warrantyStatusFor(a),
+            reportedBy: currentUser().name
+          };
+          t.set(doc(db, 'maintenance', ticket.maintenanceId), ticket);
+        }
+        writeLog(
+          t,
+          makeLog('RETURN_ASSET', 'Asset', a.assetId, `${a.assetId} (${a.itemName}) returned by ${a.assignedTo || 'staff'}. Condition: ${next.condition}. Status: ${newStatus}${needsRepair ? ' (repair ticket opened)' : ''}.`)
+        );
+        result = { asset: next, transaction: tx };
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to return asset.');
     }
-
-    // Create activity log
-    const returnLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'RETURN_ASSET',
-      recordType: 'Asset',
-      recordId: asset.assetId,
-      details: `Asset ${asset.assetId} (${asset.itemName}) returned by ${prevEmp || 'Staff'}. Condition: ${payload.returnCondition}. Status: ${newStatus}.`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(returnLog);
-    saveActivityLogToFirestore(returnLog).catch(() => {});
-
-    saveLocalStore(store);
-    saveAssetToFirestore(asset).catch(() => {});
-    saveTransactionToFirestore(tx).catch(() => {});
-    return { success: true, message: `Asset returned. Status: ${newStatus}`, asset, transaction: tx };
+    return { success: true, message: `Asset returned. Status: ${result.asset.status}`, ...result };
   },
 
   async transferAsset(payload: {
@@ -1149,74 +997,35 @@ export const api = {
     officeBranch?: string;
     notes?: string;
   }): Promise<{ success: boolean; message: string; asset?: Asset; transaction?: AssetTransaction }> {
-    const data = await safeFetch<any>(`/assets/transfer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
-    if (asset) {
-      const oldRoom = asset.buildingRoom;
-      const oldBranch = asset.officeBranch;
-
-      asset.buildingRoom = payload.targetLocation;
-      if (payload.officeBranch) asset.officeBranch = payload.officeBranch;
-      asset.lastUpdated = new Date().toISOString();
-
-      // Update location asset counts
-      const prevLoc = store.locations.find((l: any) => l.room && oldRoom && (l.room === oldRoom || oldRoom.includes(l.room)));
-      if (prevLoc && prevLoc.assetCount > 0) {
-        prevLoc.assetCount = Math.max(0, prevLoc.assetCount - 1);
-        saveLocationToFirestore(prevLoc).catch(() => {});
-      }
-      const nextLoc = store.locations.find((l: any) => l.room && payload.targetLocation && (l.room === payload.targetLocation || payload.targetLocation.includes(l.room)));
-      if (nextLoc) {
-        nextLoc.assetCount = (nextLoc.assetCount || 0) + 1;
-        saveLocationToFirestore(nextLoc).catch(() => {});
-      }
-
-      const tx: AssetTransaction = {
-        transactionId: `TX-${Date.now()}`,
-        assetId: asset.assetId,
-        assetName: asset.itemName,
-        employeeId: asset.assignedEmployeeId,
-        employeeName: asset.assignedTo,
-        transactionType: 'TRANSFER',
-        performedByUserId: store.user.userId,
-        performedByName: store.user.name,
-        timestamp: new Date().toISOString(),
-        previousStatus: asset.status,
-        newStatus: asset.status,
-        condition: asset.condition,
-        location: payload.targetLocation,
-        notes: payload.notes || `Relocated from ${oldRoom} to ${payload.targetLocation}`
-      };
-      store.transactions.unshift(tx);
-      saveTransactionToFirestore(tx).catch(() => {});
-
-      const transferLog: ActivityLog = {
-        logId: `LOG-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        userId: store.user.userId,
-        userName: store.user.name,
-        userRole: store.user.role,
-        action: 'TRANSFER_ASSET',
-        recordType: 'Asset',
-        recordId: asset.assetId,
-        details: `Asset ${asset.assetId} transferred to ${payload.targetLocation} (${payload.officeBranch || asset.officeBranch}).`
-      };
-      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-      store.activityLogs.unshift(transferLog);
-      saveActivityLogToFirestore(transferLog).catch(() => {});
-
-      saveLocalStore(store);
-      saveAssetToFirestore(asset).catch(() => {});
-      if (data && data.success) return data;
-      return { success: true, message: `Transferred successfully to ${payload.targetLocation}`, asset, transaction: tx };
+    requireRole(MANAGER_ROLES, 'transfer assets');
+    await ready();
+    if (!payload.targetLocation?.trim()) throw new Error('Select the destination location.');
+    let result!: { asset: Asset; transaction: AssetTransaction };
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, payload.assetId);
+        if (a.status === 'Retired' || a.status === 'Archived') throw new Error(`${a.assetId} is ${a.status} and cannot be transferred.`);
+        const next: Asset = {
+          ...a,
+          buildingRoom: payload.targetLocation.trim(),
+          officeBranch: payload.officeBranch || a.officeBranch,
+          lastUpdated: nowIso()
+        };
+        const tx = makeTx(next, 'TRANSFER', a.status, a.status, {
+          employeeId: a.assignedEmployeeId,
+          employeeName: a.assignedTo,
+          location: next.buildingRoom,
+          notes: payload.notes?.trim() || `Moved from ${a.buildingRoom || '—'} to ${next.buildingRoom}`
+        });
+        t.set(doc(db, 'assets', a.assetId), next);
+        writeTx(t, tx);
+        writeLog(t, makeLog('TRANSFER_ASSET', 'Asset', a.assetId, `${a.assetId} moved to ${next.buildingRoom} (${next.officeBranch}).`));
+        result = { asset: next, transaction: tx };
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to transfer asset.');
     }
-    if (data && data.success) return data;
-    return { success: true, message: 'Transferred successfully' };
+    return { success: true, message: `Transferred to ${payload.targetLocation}`, ...result };
   },
 
   async reportMissingOrLost(payload: {
@@ -1224,66 +1033,37 @@ export const api = {
     status: 'Missing' | 'Lost';
     reason: string;
   }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
-    const data = await safeFetch<any>(`/assets/report-missing`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (data && data.success) return data;
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
-    if (!asset) throw new Error('Asset not found');
-
-    const prevAssignedEmpId = asset.assignedEmployeeId;
-    asset.status = payload.status;
-    asset.remarks = `[${payload.status}]: ${payload.reason}`;
-    asset.lastUpdated = new Date().toISOString();
-
-    // If asset was issued, decrement the employee's active count
-    if (prevAssignedEmpId) {
-      const emp = store.employees.find((e: any) => e.employeeId === prevAssignedEmpId);
-      if (emp && emp.assignedAssetCount > 0) {
-        emp.assignedAssetCount = Math.max(0, emp.assignedAssetCount - 1);
-        saveEmployeeToFirestore(emp).catch(() => {});
-      }
+    requireRole(MANAGER_ROLES, 'report missing assets');
+    await ready();
+    if (!payload.reason?.trim()) throw new Error('Please describe what happened.');
+    let result!: { asset: Asset; transaction: AssetTransaction };
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, payload.assetId);
+        const allowed: AssetStatus[] = ['Available', 'Issued', 'Under Maintenance'];
+        if (payload.status === 'Lost' && a.status === 'Missing') allowed.push('Missing');
+        if (!allowed.includes(a.status)) throw new Error(`${a.assetId} is "${a.status}" and cannot be reported ${payload.status}.`);
+        // The last custodian is kept on the record (accountability), but the
+        // asset no longer counts as issued to them.
+        const next: Asset = { ...a, status: payload.status, dueDate: '', lastUpdated: nowIso() };
+        const tx = makeTx(next, payload.status === 'Missing' ? 'REPORT_MISSING' : 'REPORT_LOST', a.status, payload.status, {
+          employeeId: a.assignedEmployeeId,
+          employeeName: a.assignedTo,
+          location: a.buildingRoom,
+          notes: payload.reason.trim()
+        });
+        t.set(doc(db, 'assets', a.assetId), next);
+        writeTx(t, tx);
+        writeLog(
+          t,
+          makeLog(payload.status === 'Missing' ? 'REPORT_MISSING' : 'REPORT_LOST', 'Asset', a.assetId, `${a.assetId} (${a.itemName}) marked ${payload.status}. Reason: ${payload.reason.trim()}`)
+        );
+        result = { asset: next, transaction: tx };
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to report asset.');
     }
-
-    const tx: AssetTransaction = {
-      transactionId: `TX-${Date.now()}`,
-      assetId: asset.assetId,
-      assetName: asset.itemName,
-      employeeId: asset.assignedEmployeeId,
-      employeeName: asset.assignedTo,
-      transactionType: payload.status === 'Missing' ? 'REPORT_MISSING' : 'REPORT_LOST',
-      performedByUserId: store.user.userId,
-      performedByName: store.user.name,
-      timestamp: new Date().toISOString(),
-      previousStatus: 'Issued',
-      newStatus: payload.status,
-      condition: asset.condition,
-      notes: payload.reason
-    };
-    store.transactions.unshift(tx);
-    saveTransactionToFirestore(tx).catch(() => {});
-
-    const log: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: payload.status === 'Missing' ? 'REPORT_MISSING' : 'REPORT_LOST',
-      recordType: 'Asset',
-      recordId: asset.assetId,
-      details: `Asset ${asset.assetId} (${asset.itemName}) was marked as ${payload.status}. Reason: ${payload.reason}`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(log);
-    saveActivityLogToFirestore(log).catch(() => {});
-
-    saveLocalStore(store);
-    saveAssetToFirestore(asset).catch(() => {});
-    return { success: true, message: `Asset marked as ${payload.status}`, asset, transaction: tx };
+    return { success: true, message: `Asset marked as ${payload.status}`, ...result };
   },
 
   async resolveMissingStatus(payload: {
@@ -1293,960 +1073,1094 @@ export const api = {
     resolutionNotes: string;
     location?: string;
   }): Promise<{ success: boolean; message: string; asset: Asset; transaction: AssetTransaction }> {
-    const data = await safeFetch<any>(`/assets/resolve-status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (data && data.success && data.asset && data.transaction) return data;
-    const store = getLocalStore();
-    const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === payload.assetId.toUpperCase());
-    if (!asset) throw new Error('Asset not found');
-
-    const previousStatus = asset.status;
-    asset.status = payload.newStatus || 'Available';
-    asset.condition = payload.condition || 'Good';
-    asset.assignedEmployeeId = '';
-    asset.assignedTo = '';
-    if (payload.location) asset.buildingRoom = payload.location;
-    asset.remarks = `[Resolved ${previousStatus}]: ${payload.resolutionNotes}`;
-    asset.lastUpdated = new Date().toISOString();
-
-    const tx: AssetTransaction = {
-      transactionId: `TX-${Date.now()}`,
-      assetId: asset.assetId,
-      assetName: asset.itemName,
-      employeeId: '',
-      employeeName: '',
-      transactionType: 'RESOLVE_MISSING',
-      performedByUserId: store.user.userId,
-      performedByName: store.user.name,
-      timestamp: new Date().toISOString(),
-      previousStatus: previousStatus,
-      newStatus: asset.status,
-      condition: asset.condition,
-      notes: payload.resolutionNotes,
-      location: asset.buildingRoom
-    };
-    store.transactions.unshift(tx);
-    saveTransactionToFirestore(tx).catch(() => {});
-
-    const resLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'RESOLVE_STATUS',
-      recordType: 'Asset',
-      recordId: asset.assetId,
-      details: `Asset ${asset.assetId} (${asset.itemName}) recovered from ${previousStatus} to ${asset.status}. Notes: ${payload.resolutionNotes}`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(resLog);
-    saveActivityLogToFirestore(resLog).catch(() => {});
-
-    saveLocalStore(store);
-    saveAssetToFirestore(asset).catch(() => {});
-    return { success: true, message: `Status resolved to ${asset.status}`, asset, transaction: tx };
+    requireRole(MANAGER_ROLES, 'resolve missing assets');
+    await ready();
+    let result!: { asset: Asset; transaction: AssetTransaction };
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, payload.assetId);
+        if (a.status !== 'Missing' && a.status !== 'Lost') throw new Error(`${a.assetId} is "${a.status}", not Missing/Lost.`);
+        const next: Asset = {
+          ...a,
+          status: payload.newStatus || 'Available',
+          condition: payload.condition || a.condition,
+          assignedEmployeeId: '',
+          assignedTo: '',
+          dueDate: '',
+          buildingRoom: payload.location || a.buildingRoom,
+          lastUpdated: nowIso()
+        };
+        const tx = makeTx(next, 'RESOLVE_MISSING', a.status, next.status, {
+          employeeId: a.assignedEmployeeId,
+          employeeName: a.assignedTo,
+          location: next.buildingRoom,
+          notes: payload.resolutionNotes?.trim() || 'Recovered'
+        });
+        t.set(doc(db, 'assets', a.assetId), next);
+        writeTx(t, tx);
+        writeLog(t, makeLog('RESOLVE_STATUS', 'Asset', a.assetId, `${a.assetId} recovered from ${a.status} to ${next.status}. ${payload.resolutionNotes || ''}`.trim()));
+        result = { asset: next, transaction: tx };
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to resolve status.');
+    }
+    return { success: true, message: `Status resolved to ${result.asset.status}`, ...result };
   },
 
+  // ----- employees -----
   async getEmployees(): Promise<Employee[]> {
-    const data = await safeFetch<{ success: boolean; employees: Employee[] }>(`/employees`);
-    if (data && data.success) return data.employees;
-    initFirestoreIfEmpty(FALLBACK_SEED).catch(() => {});
-    const cloudEmps = await fetchAllEmployeesFromFirestore();
-    if (cloudEmps && cloudEmps.length > 0) {
-      const store = getLocalStore();
-      store.employees = cloudEmps;
-      saveLocalStore(store);
-      return cloudEmps;
-    }
-    return getLocalStore().employees;
+    await ready();
+    return derivedEmployees();
   },
 
   async getEmployeeById(id: string): Promise<{ employee: Employee; assignedAssets: Asset[]; history: AssetTransaction[] }> {
-    const data = await safeFetch<any>(`/employees/${encodeURIComponent(id)}`);
-    if (data && data.success) return data;
-    const store = getLocalStore();
-    const employee = store.employees.find((e: any) => e.employeeId === id);
+    await ready();
+    const employee = derivedEmployees().find((e) => same(e.employeeId, id));
     if (!employee) throw new Error('Employee not found');
-    const assignedAssets = store.assets.filter((a: any) => a.assignedEmployeeId === id && a.status === 'Issued');
-    const history = store.transactions.filter((t: any) => t.employeeId === id);
+    const assignedAssets = cache.assets.filter((a) => a.status === 'Issued' && same(a.assignedEmployeeId, id));
+    const history = cache.transactions.filter((t) => same(t.employeeId, id));
     return { employee, assignedAssets, history };
   },
 
-  async createEmployee(payload: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
-    const data = await safeFetch<any>('/employees', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const store = getLocalStore();
-    let empId = payload.employeeId?.trim().toUpperCase();
-    if (!empId) {
-      const highestNum = store.employees.reduce((max: number, e: any) => {
-        const match = e.employeeId.match(/\d+/);
-        return match ? Math.max(max, parseInt(match[0], 10)) : max;
-      }, 0);
-      empId = `EMP-${String(highestNum + 1).padStart(3, '0')}`;
-    }
+  suggestEmployeeId(): string {
+    return nextSequential('EMP-', cache.employees.map((e) => e.employeeId));
+  },
 
-    const newEmp: Employee = {
-      employeeId: empId,
-      fullName: payload.fullName?.trim() || 'New Staff',
-      department: payload.department || 'Administration',
-      designation: payload.designation || 'Staff Member',
-      email: payload.email || '',
-      phone: payload.phone || '',
-      officeBranch: payload.officeBranch || 'Head Office - Islamabad',
-      activeStatus: true,
+  async createEmployee(payload: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
+    requireRole(MANAGER_ROLES, 'add employees');
+    await ready();
+    const fullName = str(payload.fullName).trim();
+    if (!fullName) throw new Error('Full name is required.');
+    const email = str(payload.email).trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Email address is not valid.');
+    if (email && cache.employees.some((e) => e.email && same(e.email, email))) throw new Error(`Email ${email} is already used by another employee.`);
+    if (payload.role === 'Super Admin') requireRole(['Super Admin'], 'create Super Admin accounts');
+
+    const employeeId = norm(payload.employeeId) || api.suggestEmployeeId();
+    const employee: Employee = {
+      employeeId,
+      fullName,
+      department: str(payload.department).trim(),
+      designation: str(payload.designation).trim(),
+      email,
+      phone: str(payload.phone).trim(),
+      officeBranch: str(payload.officeBranch).trim(),
+      activeStatus: payload.activeStatus !== false,
       assignedAssetCount: 0,
       role: payload.role || 'Employee'
     };
-
-    if (!store.employees.some((e: any) => e.employeeId === empId)) {
-      store.employees.push(newEmp);
-      saveLocalStore(store);
-      saveEmployeeToFirestore(newEmp).catch(() => {});
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'employees', employeeId);
+        if ((await t.get(ref)).exists()) throw new Error(`Employee ID ${employeeId} already exists.`);
+        const { assignedAssetCount, ...rest } = employee;
+        t.set(ref, rest);
+        writeLog(t, makeLog('CREATE_EMPLOYEE', 'Employee', employeeId, `Employee ${fullName} (${employeeId}) registered.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to add employee.');
     }
-
-    if (data && data.success) return data;
-    return { success: true, message: `Employee ${newEmp.fullName} registered successfully`, employee: newEmp };
+    return { success: true, message: `Employee ${fullName} registered`, employee };
   },
 
   async updateEmployee(id: string, updates: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
-    const data = await safeFetch<any>(`/employees/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-
-    const store = getLocalStore();
-    const emp = store.employees.find((e: any) => e.employeeId.toUpperCase() === id.toUpperCase());
-    if (emp) {
-      Object.assign(emp, updates);
-      if (updates.fullName) {
-        store.assets.forEach((a: any) => {
-          if (a.assignedEmployeeId === id) a.assignedTo = updates.fullName;
-        });
-      }
-      if (store.user && store.user.employeeId === id) {
-        if (updates.fullName) store.user.name = updates.fullName;
-        if (updates.email) store.user.email = updates.email;
-        if (updates.role) store.user.role = updates.role;
-        if (updates.officeBranch) store.user.officeBranch = updates.officeBranch;
-      }
-      saveLocalStore(store);
-      saveEmployeeToFirestore(emp).catch(() => {});
+    const me = currentUser();
+    const editingSelf = !!me.employeeId && same(me.employeeId, id);
+    if (!editingSelf) requireRole(MANAGER_ROLES, 'edit employees');
+    await ready();
+    const current = findEmployee(id);
+    if (!current) throw new Error('Employee not found');
+    const next: Employee = { ...current };
+    for (const k of ['fullName', 'department', 'designation', 'email', 'phone', 'officeBranch'] as const) {
+      if (updates[k] !== undefined) next[k] = str(updates[k]).trim();
+    }
+    if (!next.fullName) throw new Error('Full name is required.');
+    if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) throw new Error('Email address is not valid.');
+    if (next.email && cache.employees.some((e) => !same(e.employeeId, id) && e.email && same(e.email, next.email))) {
+      throw new Error(`Email ${next.email} is already used by another employee.`);
     }
 
-    if (data && data.success) return data;
-    if (!emp) throw new Error('Employee not found');
-    return { success: true, message: `Employee ${emp.fullName} updated`, employee: emp };
+    const issued = cache.assets.filter((a) => a.status === 'Issued' && same(a.assignedEmployeeId, id));
+    if (updates.activeStatus === false && current.activeStatus) {
+      if (issued.length) throw new Error(`${current.fullName} still holds ${issued.length} asset(s). Return them before deactivating.`);
+      next.activeStatus = false;
+    } else if (updates.activeStatus === true) {
+      next.activeStatus = true;
+    }
+
+    if (updates.role && updates.role !== current.role) {
+      requireRole(['Super Admin'], 'change user roles');
+      if (current.role === 'Super Admin' && cache.employees.filter((e) => e.role === 'Super Admin' && e.activeStatus).length <= 1) {
+        throw new Error('This is the only Super Admin. Assign another Super Admin first.');
+      }
+      next.role = updates.role;
+    }
+
+    const ops: Array<(b: WriteBatch) => void> = [];
+    const { assignedAssetCount, ...rest } = next;
+    ops.push((b) => b.set(doc(db, 'employees', current.employeeId), rest));
+    if (next.fullName !== current.fullName) {
+      // Keep the holder name on assets in step with the employee record.
+      cache.assets
+        .filter((a) => same(a.assignedEmployeeId, id))
+        .forEach((a) => ops.push((b) => b.update(doc(db, 'assets', a.assetId), { assignedTo: next.fullName })));
+    }
+    ops.push((b) => writeLog(b, makeLog('UPDATE_EMPLOYEE', 'Employee', current.employeeId, `Employee ${next.fullName} (${current.employeeId}) updated.`)));
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update employee.');
+    }
+    if (editingSelf) writeSession({ ...sessionFromEmployee(next), role: next.role || me.role });
+    return { success: true, message: `Employee ${next.fullName} updated`, employee: { ...next, assignedAssetCount: issued.length } };
   },
 
   async deleteEmployee(id: string): Promise<{ success: boolean; message: string }> {
-    if (id === 'EMP-001') {
-      throw new Error('Executive Director (Super Admin) account cannot be deleted.');
+    requireRole(MANAGER_ROLES, 'delete employees');
+    await ready();
+    const emp = findEmployee(id);
+    if (!emp) throw new Error('Employee not found');
+    const me = currentUser();
+    if (me.employeeId && same(me.employeeId, id)) throw new Error('You cannot delete your own account.');
+    if (emp.role === 'Super Admin' && cache.employees.filter((e) => e.role === 'Super Admin').length <= 1) {
+      throw new Error('This is the only Super Admin and cannot be deleted.');
     }
-
-    const data = await safeFetch<any>(`/employees/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
-
-    const store = getLocalStore();
-    const idx = store.employees.findIndex((e: any) => e.employeeId.toUpperCase() === id.toUpperCase());
-    if (idx !== -1) {
-      const activeAssets = store.assets.filter((a: any) => a.assignedEmployeeId === id && a.status === 'Issued');
-      if (activeAssets.length > 0) {
-        throw new Error(`Cannot delete: Employee has ${activeAssets.length} active assigned asset(s).`);
-      }
-      const removed = store.employees.splice(idx, 1)[0];
-      deleteEmployeeFromFirestore(id).catch(() => {});
-      saveLocalStore(store);
-      if (data && data.success) return data;
-      return { success: true, message: `Employee ${removed.fullName} removed from registry` };
+    const issued = cache.assets.filter((a) => a.status === 'Issued' && same(a.assignedEmployeeId, id));
+    if (issued.length) throw new Error(`Cannot delete: ${emp.fullName} holds ${issued.length} asset(s). Return them first.`);
+    const b = newBatch();
+    b.delete(doc(db, 'employees', emp.employeeId));
+    writeLog(b, makeLog('DELETE_EMPLOYEE', 'Employee', emp.employeeId, `Employee ${emp.fullName} (${emp.employeeId}) removed.`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete employee.');
     }
-
-    if (data && data.success) return data;
-    return { success: true, message: 'Employee removed' };
+    return { success: true, message: `Employee ${emp.fullName} removed` };
   },
 
   async updateUserProfile(updates: { name?: string; email?: string; phone?: string; officeBranch?: string; designation?: string }): Promise<UserSession> {
-    const data = await safeFetch<any>('/auth/profile', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-
-    const store = getLocalStore();
-    if (updates.name) store.user.name = updates.name;
-    if (updates.email) store.user.email = updates.email;
-    if (updates.officeBranch) store.user.officeBranch = updates.officeBranch;
-
-    if (store.user.employeeId) {
-      const emp = store.employees.find((e: any) => e.employeeId === store.user.employeeId);
-      if (emp) {
-        if (updates.name) emp.fullName = updates.name;
-        if (updates.email) emp.email = updates.email;
-        if (updates.phone) emp.phone = updates.phone;
-        if (updates.officeBranch) emp.officeBranch = updates.officeBranch;
-        if (updates.designation) emp.designation = updates.designation;
-        saveEmployeeToFirestore(emp).catch(() => {});
-      }
+    await ready();
+    const me = currentUser();
+    if (me.employeeId && findEmployee(me.employeeId)) {
+      await api.updateEmployee(me.employeeId, {
+        fullName: updates.name,
+        email: updates.email,
+        phone: updates.phone,
+        officeBranch: updates.officeBranch,
+        designation: updates.designation
+      });
+      return currentUser();
     }
-    const execEmp = store.employees.find((e: any) => e.employeeId === 'EMP-001');
-    if (execEmp) {
-      if (updates.name) execEmp.fullName = updates.name;
-      if (updates.email) execEmp.email = updates.email;
-      if (updates.phone) execEmp.phone = updates.phone;
-      if (updates.officeBranch) execEmp.officeBranch = updates.officeBranch;
-      if (updates.designation) execEmp.designation = updates.designation;
-      saveEmployeeToFirestore(execEmp).catch(() => {});
-    }
-    saveLocalStore(store);
-    saveUserToFirestore(store.user).catch(() => {});
-
-    if (data && data.success) return data.user;
-    return store.user;
+    const u: UserSession = {
+      ...me,
+      name: updates.name?.trim() || me.name,
+      email: updates.email?.trim() ?? me.email,
+      officeBranch: updates.officeBranch?.trim() ?? me.officeBranch
+    };
+    writeSession(u);
+    return u;
   },
 
+  // ----- categories -----
   async getCategories(): Promise<Category[]> {
-    const data = await safeFetch<{ success: boolean; categories: Category[] }>(`/categories`);
-    if (data && data.success) return data.categories;
-    const cloudCats = await fetchCategoriesFromFirestore();
-    if (cloudCats && cloudCats.length > 0) {
-      const store = getLocalStore();
-      store.categories = cloudCats;
-      saveLocalStore(store);
-      return cloudCats;
-    }
-    return getLocalStore().categories;
+    await ready();
+    return derivedCategories();
   },
 
   async createCategory(payload: Partial<Category>): Promise<{ success: boolean; message: string; category: Category }> {
-    const data = await safeFetch<any>('/categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const store = getLocalStore();
-    let code = payload.categoryId?.trim().toUpperCase();
-    if (!code) {
-      code = (payload.categoryName || 'GEN').trim().substring(0, 4).toUpperCase();
-      let counter = 1;
-      const baseCode = code;
-      while (store.categories.some((c: any) => c.categoryId.toUpperCase() === code)) {
-        code = `${baseCode}${counter++}`;
-      }
+    requireRole(MANAGER_ROLES, 'create categories');
+    await ready();
+    const name = str(payload.categoryName).trim();
+    if (!name) throw new Error('Category name is required.');
+    if (cache.categories.some((c) => same(c.categoryName, name))) throw new Error(`A category named "${name}" already exists.`);
+    let id = normalizeCategoryId(str(payload.categoryId));
+    if (!id) {
+      const base = `CAT-${name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'GEN'}`;
+      id = base;
+      let n = 2;
+      while (cache.categories.some((c) => same(c.categoryId, id))) id = `${base}${n++}`;
     }
-
-    if (store.categories.some((c: any) => c.categoryId.toUpperCase() === code)) {
-      throw new Error(`Category code "${code}" already exists.`);
-    }
-
-    const newCat: Category = {
-      categoryId: code,
-      categoryName: payload.categoryName?.trim() || 'New Category',
-      description: payload.description?.trim() || '',
+    const category: Category = {
+      categoryId: id,
+      categoryName: name,
+      description: str(payload.description).trim(),
       totalAssets: 0,
       iconName: payload.iconName || 'FolderTree'
     };
-
-    store.categories.push(newCat);
-    saveLocalStore(store);
-    saveCategoryToFirestore(newCat).catch(() => {});
-
-    if (data && data.success) return data;
-    return { success: true, message: `Category ${newCat.categoryName} created successfully`, category: newCat };
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'categories', id);
+        if ((await t.get(ref)).exists()) throw new Error(`Category code ${id} already exists.`);
+        const { totalAssets, ...rest } = category;
+        t.set(ref, rest);
+        writeLog(t, makeLog('CREATE_CATEGORY', 'Category', id, `Category "${name}" (${id}) created.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to create category.');
+    }
+    return { success: true, message: `Category ${name} created`, category };
   },
 
   async updateCategory(id: string, updates: Partial<Category>): Promise<{ success: boolean; message: string; category: Category }> {
-    const cleanId = id.trim().toUpperCase();
-    const data = await safeFetch<any>(`/categories/${encodeURIComponent(cleanId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-
-    const store = getLocalStore();
-    const cat = store.categories.find((c: any) => c.categoryId.toUpperCase() === cleanId);
-    if (cat) {
-      const oldName = cat.categoryName;
-      const oldCategoryId = cat.categoryId;
-
-      let newCategoryId = updates.categoryId?.trim().toUpperCase();
-      if (newCategoryId && newCategoryId !== oldCategoryId) {
-        if (store.categories.some((c: any) => c.categoryId.toUpperCase() === newCategoryId && c.categoryId.toUpperCase() !== cleanId)) {
-          throw new Error(`Category code "${newCategoryId}" is already used by another category.`);
-        }
-        cat.categoryId = newCategoryId;
-      }
-
-      if (updates.categoryName) cat.categoryName = updates.categoryName.trim();
-      if (updates.description !== undefined) cat.description = updates.description.trim();
-      if (updates.iconName) cat.iconName = updates.iconName;
-
-      // Update all linked assets if categoryId or categoryName changed
-      store.assets.forEach((a: any) => {
-        if (a.categoryId.toUpperCase() === cleanId || a.categoryId.toUpperCase() === oldCategoryId.toUpperCase()) {
-          a.categoryId = cat.categoryId;
-          if (updates.categoryName) a.categoryName = cat.categoryName;
-        }
-      });
-
-      saveLocalStore(store);
-      saveCategoryToFirestore(cat).catch(() => {});
+    requireRole(MANAGER_ROLES, 'edit categories');
+    await ready();
+    const current = cache.categories.find((c) => same(c.categoryId, id));
+    if (!current) throw new Error('Category not found');
+    const newId = updates.categoryId ? normalizeCategoryId(updates.categoryId) : current.categoryId;
+    const name = updates.categoryName !== undefined ? updates.categoryName.trim() : current.categoryName;
+    if (!name) throw new Error('Category name is required.');
+    if (cache.categories.some((c) => !same(c.categoryId, current.categoryId) && same(c.categoryName, name))) {
+      throw new Error(`A category named "${name}" already exists.`);
     }
+    const idChanged = !same(newId, current.categoryId);
+    if (idChanged && cache.categories.some((c) => same(c.categoryId, newId))) throw new Error(`Category code ${newId} is already used.`);
 
-    if (data && data.success) return data;
-    if (!cat) throw new Error('Category not found');
-    return { success: true, message: `Category ${cat.categoryName} updated successfully`, category: cat };
+    const next: Category = {
+      ...current,
+      categoryId: idChanged ? newId : current.categoryId,
+      categoryName: name,
+      description: updates.description !== undefined ? updates.description.trim() : current.description,
+      iconName: updates.iconName || current.iconName
+    };
+    const { totalAssets, ...rest } = next;
+    const ops: Array<(b: WriteBatch) => void> = [(b) => b.set(doc(db, 'categories', next.categoryId), rest)];
+    if (idChanged) ops.push((b) => b.delete(doc(db, 'categories', current.categoryId)));
+    if (idChanged || name !== current.categoryName) {
+      cache.assets
+        .filter((a) => same(a.categoryId, current.categoryId))
+        .forEach((a) => ops.push((b) => b.update(doc(db, 'assets', a.assetId), { categoryId: next.categoryId, categoryName: name })));
+    }
+    ops.push((b) => writeLog(b, makeLog('UPDATE_CATEGORY', 'Category', next.categoryId, `Category "${name}" (${next.categoryId}) updated.`)));
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update category.');
+    }
+    return { success: true, message: `Category ${name} updated`, category: next };
   },
 
   async deleteCategory(id: string): Promise<{ success: boolean; message: string }> {
-    const cleanId = id.trim().toUpperCase();
-    const store = getLocalStore();
-    const linkedAssets = store.assets.filter((a: any) => a.categoryId.toUpperCase() === cleanId);
-    if (linkedAssets.length > 0) {
-      throw new Error(`Cannot delete: Category "${cleanId}" has ${linkedAssets.length} active registered asset(s). Please reassign assets first.`);
+    requireRole(MANAGER_ROLES, 'delete categories');
+    await ready();
+    const cat = cache.categories.find((c) => same(c.categoryId, id));
+    if (!cat) throw new Error('Category not found');
+    const linked = cache.assets.filter((a) => same(a.categoryId, cat.categoryId)).length;
+    if (linked) throw new Error(`Cannot delete "${cat.categoryName}": ${linked} asset(s) use it. Move them to another category first.`);
+    const b = newBatch();
+    b.delete(doc(db, 'categories', cat.categoryId));
+    writeLog(b, makeLog('DELETE_CATEGORY', 'Category', cat.categoryId, `Category "${cat.categoryName}" deleted.`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete category.');
     }
-
-    const data = await safeFetch<any>(`/categories/${encodeURIComponent(cleanId)}`, {
-      method: 'DELETE'
-    });
-
-    const idx = store.categories.findIndex((c: any) => c.categoryId.toUpperCase() === cleanId);
-    if (idx !== -1) {
-      const removed = store.categories.splice(idx, 1)[0];
-      deleteCategoryFromFirestore(cleanId).catch(() => {});
-      saveLocalStore(store);
-      if (data && data.success) return data;
-      return { success: true, message: `Category ${removed.categoryName} deleted successfully` };
-    }
-
-    if (data && data.success) return data;
-    return { success: true, message: 'Category deleted' };
+    return { success: true, message: `Category ${cat.categoryName} deleted` };
   },
 
+  // ----- locations -----
   async getLocations(): Promise<LocationRecord[]> {
-    const data = await safeFetch<{ success: boolean; locations: LocationRecord[] }>(`/locations`);
-    if (data && data.success) return data.locations;
-    const cloudLocs = await fetchLocationsFromFirestore();
-    if (cloudLocs && cloudLocs.length > 0) {
-      const store = getLocalStore();
-      store.locations = cloudLocs;
-      saveLocalStore(store);
-      return cloudLocs;
-    }
-    return getLocalStore().locations;
+    await ready();
+    return derivedLocations();
   },
 
   async createLocation(payload: Partial<LocationRecord>): Promise<{ success: boolean; message: string; location: LocationRecord }> {
-    const data = await safeFetch<any>('/locations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const store = getLocalStore();
-    let id = payload.locationId?.trim().toUpperCase();
+    requireRole(MANAGER_ROLES, 'create locations');
+    await ready();
+    const officeBranch = str(payload.officeBranch).trim();
+    const building = str(payload.building).trim();
+    const room = str(payload.room).trim();
+    if (!officeBranch || !building || !room) throw new Error('City/branch, building and room are all required.');
+    if (cache.locations.some((l) => same(l.officeBranch, officeBranch) && same(l.building, building) && same(l.room, room))) {
+      throw new Error(`"${room}" already exists in ${building}, ${officeBranch}.`);
+    }
+    let id = norm(payload.locationId);
     if (!id) {
-      const prefix = (payload.officeBranch || 'HO').trim().substring(0, 3).toUpperCase();
-      const roomNum = (payload.room?.match(/\d+/) || ['01'])[0];
-      id = `LOC-${prefix}-${roomNum}`;
-      let counter = 1;
-      while (store.locations.some((l: any) => l.locationId.toUpperCase() === id)) {
-        id = `LOC-${prefix}-${roomNum}-${counter++}`;
-      }
+      const prefix = `LOC-${officeBranch.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'GEN'}-`;
+      id = nextSequential(prefix, cache.locations.map((l) => l.locationId), 2);
     }
-
-    if (store.locations.some((l: any) => l.locationId.toUpperCase() === id)) {
-      throw new Error(`Location ID "${id}" already exists.`);
-    }
-
-    const newLoc: LocationRecord = {
+    const location: LocationRecord = {
       locationId: id,
-      officeBranch: payload.officeBranch?.trim() || 'Head Office - Islamabad',
-      building: payload.building?.trim() || 'Main Building',
-      floor: payload.floor?.trim() || 'Ground Floor',
-      room: payload.room?.trim() || 'Room 1',
-      description: payload.description?.trim() || '',
+      officeBranch,
+      building,
+      floor: str(payload.floor).trim(),
+      room,
+      description: str(payload.description).trim(),
       isStore: Boolean(payload.isStore),
       assetCount: 0
     };
-
-    store.locations.push(newLoc);
-    saveLocalStore(store);
-    saveLocationToFirestore(newLoc).catch(() => {});
-
-    if (data && data.success) return data;
-    return { success: true, message: `Location ${newLoc.room} created successfully`, location: newLoc };
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'locations', id);
+        if ((await t.get(ref)).exists()) throw new Error(`Location ID ${id} already exists.`);
+        const { assetCount, ...rest } = location;
+        t.set(ref, rest);
+        writeLog(t, makeLog('CREATE_LOCATION', 'Location', id, `Location ${locationLabel(location)} (${officeBranch}) created.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to create location.');
+    }
+    return { success: true, message: `Location ${room} created`, location };
   },
 
   async updateLocation(id: string, updates: Partial<LocationRecord>): Promise<{ success: boolean; message: string; location: LocationRecord }> {
-    const cleanId = id.trim().toUpperCase();
-    const data = await safeFetch<any>(`/locations/${encodeURIComponent(cleanId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-
-    const store = getLocalStore();
-    const loc = store.locations.find((l: any) => l.locationId.toUpperCase() === cleanId);
-    if (loc) {
-      const oldBranch = loc.officeBranch;
-      const oldRoom = loc.room;
-
-      if (updates.officeBranch) loc.officeBranch = updates.officeBranch.trim();
-      if (updates.building) loc.building = updates.building.trim();
-      if (updates.floor) loc.floor = updates.floor.trim();
-      if (updates.room) loc.room = updates.room.trim();
-      if (updates.description !== undefined) loc.description = updates.description.trim();
-      if (updates.isStore !== undefined) loc.isStore = Boolean(updates.isStore);
-
-      // Update assets if branch or room changed
-      if ((updates.officeBranch && updates.officeBranch !== oldBranch) || (updates.room && updates.room !== oldRoom)) {
-        store.assets.forEach((a: any) => {
-          if (a.officeBranch === oldBranch && a.buildingRoom.includes(oldRoom)) {
-            if (updates.officeBranch) a.officeBranch = updates.officeBranch.trim();
-            if (updates.room) a.buildingRoom = a.buildingRoom.replace(oldRoom, updates.room.trim());
-          }
-        });
-      }
-
-      saveLocalStore(store);
-      saveLocationToFirestore(loc).catch(() => {});
+    requireRole(MANAGER_ROLES, 'edit locations');
+    await ready();
+    const current = cache.locations.find((l) => same(l.locationId, id));
+    if (!current) throw new Error('Location not found');
+    const next: LocationRecord = { ...current };
+    for (const k of ['officeBranch', 'building', 'floor', 'room', 'description'] as const) {
+      if (updates[k] !== undefined) next[k] = str(updates[k]).trim();
+    }
+    if (updates.isStore !== undefined) next.isStore = Boolean(updates.isStore);
+    if (!next.officeBranch || !next.building || !next.room) throw new Error('City/branch, building and room are all required.');
+    if (
+      cache.locations.some(
+        (l) => !same(l.locationId, id) && same(l.officeBranch, next.officeBranch) && same(l.building, next.building) && same(l.room, next.room)
+      )
+    ) {
+      throw new Error(`"${next.room}" already exists in ${next.building}, ${next.officeBranch}.`);
     }
 
-    if (data && data.success) return data;
-    if (!loc) throw new Error('Location not found');
-    return { success: true, message: `Location ${loc.room} updated successfully`, location: loc };
+    const ops: Array<(b: WriteBatch) => void> = [];
+    const { assetCount, ...rest } = next;
+    ops.push((b) => b.set(doc(db, 'locations', current.locationId), rest));
+    const oldLabel = locationLabel(current);
+    const newLabel = locationLabel(next);
+    if (oldLabel !== newLabel || next.officeBranch !== current.officeBranch) {
+      cache.assets
+        .filter((a) => assetInLocation(a, current))
+        .forEach((a) => ops.push((b) => b.update(doc(db, 'assets', a.assetId), { buildingRoom: newLabel, officeBranch: next.officeBranch })));
+      cache.employees
+        .filter((e) => same(e.officeBranch, oldLabel))
+        .forEach((e) => ops.push((b) => b.update(doc(db, 'employees', e.employeeId), { officeBranch: newLabel })));
+    }
+    ops.push((b) => writeLog(b, makeLog('UPDATE_LOCATION', 'Location', current.locationId, `Location ${oldLabel} updated to ${newLabel} (${next.officeBranch}).`)));
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update location.');
+    }
+    return { success: true, message: `Location ${next.room} updated`, location: next };
   },
 
   async deleteLocation(id: string): Promise<{ success: boolean; message: string }> {
-    const cleanId = id.trim().toUpperCase();
-    const store = getLocalStore();
-    const loc = store.locations.find((l: any) => l.locationId.toUpperCase() === cleanId);
-    
-    if (loc) {
-      const linkedAssets = store.assets.filter((a: any) => a.officeBranch === loc.officeBranch && a.buildingRoom.includes(loc.room));
-      if (linkedAssets.length > 0) {
-        throw new Error(`Cannot delete: Location "${loc.room}" at ${loc.officeBranch} has ${linkedAssets.length} active registered asset(s). Please reassign assets first.`);
-      }
-
-      const linkedEmployees = store.employees.filter((e: any) => e.officeBranch && (e.officeBranch.includes(loc.room) || e.officeBranch.includes(loc.building)));
-      if (linkedEmployees.length > 0) {
-        throw new Error(`Cannot delete: Location "${loc.room}" has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map((e: any) => e.fullName).slice(0, 2).join(', ')}). Please reassign staff first.`);
-      }
+    requireRole(MANAGER_ROLES, 'delete locations');
+    await ready();
+    const loc = cache.locations.find((l) => same(l.locationId, id));
+    if (!loc) throw new Error('Location not found');
+    const linked = cache.assets.filter((a) => assetInLocation(a, loc)).length;
+    if (linked) throw new Error(`Cannot delete "${loc.room}": ${linked} asset(s) are placed there. Move them first.`);
+    const label = locationLabel(loc);
+    const staff = cache.employees.filter((e) => same(e.officeBranch, label));
+    if (staff.length) throw new Error(`Cannot delete "${loc.room}": ${staff.map((e) => e.fullName).slice(0, 2).join(', ')} are stationed there.`);
+    const b = newBatch();
+    b.delete(doc(db, 'locations', loc.locationId));
+    writeLog(b, makeLog('DELETE_LOCATION', 'Location', loc.locationId, `Location ${label} (${loc.officeBranch}) deleted.`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete location.');
     }
-
-    const data = await safeFetch<any>(`/locations/${encodeURIComponent(cleanId)}`, {
-      method: 'DELETE'
-    });
-
-    const idx = store.locations.findIndex((l: any) => l.locationId.toUpperCase() === cleanId);
-    if (idx !== -1) {
-      const removed = store.locations.splice(idx, 1)[0];
-      saveLocalStore(store);
-      await deleteLocationFromFirestore(cleanId).catch(() => {});
-      if (data && data.success) return data;
-      return { success: true, message: `Location ${removed.room} deleted successfully` };
-    }
-
-    if (data && data.success) return data;
-    return { success: true, message: 'Location deleted' };
+    return { success: true, message: `Location ${loc.room} deleted` };
   },
 
   async updateBuildingInfo(oldCity: string, oldBuilding: string, newCity: string, newBuilding: string): Promise<{ success: boolean; message: string }> {
-    const data = await safeFetch<any>('/buildings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ oldCity, oldBuilding, newCity, newBuilding })
-    });
-
-    const store = getLocalStore();
-    let updatedCount = 0;
-
-    store.locations.forEach((l: any) => {
-      if (l.officeBranch?.toLowerCase() === oldCity.toLowerCase() && l.building?.toLowerCase() === oldBuilding.toLowerCase()) {
-        l.officeBranch = newCity.trim();
-        l.building = newBuilding.trim();
-        updatedCount++;
-        saveLocationToFirestore(l).catch(() => {});
-      }
-    });
-
-    // Also update matching asset records
-    store.assets.forEach((a: any) => {
-      if (a.officeBranch?.toLowerCase() === oldCity.toLowerCase()) {
-        a.officeBranch = newCity.trim();
-      }
-    });
-
-    // Also update matching employee stationed offices
-    store.employees.forEach((e: any) => {
-      if (e.officeBranch && e.officeBranch.toLowerCase().includes(oldBuilding.toLowerCase())) {
-        e.officeBranch = e.officeBranch.replace(new RegExp(oldBuilding, 'gi'), newBuilding.trim());
-      }
-    });
-
-    saveLocalStore(store);
-    if (data && data.success) return data;
-    return { success: true, message: `Building details updated across ${updatedCount} room records` };
+    requireRole(MANAGER_ROLES, 'edit buildings');
+    await ready();
+    newCity = newCity.trim();
+    newBuilding = newBuilding.trim();
+    if (!newCity || !newBuilding) throw new Error('City and building name are required.');
+    const rooms = cache.locations.filter((l) => same(l.officeBranch, oldCity) && same(l.building, oldBuilding));
+    const ops: Array<(b: WriteBatch) => void> = [];
+    for (const l of rooms) {
+      const next = { ...l, officeBranch: newCity, building: newBuilding };
+      ops.push((b) => b.update(doc(db, 'locations', l.locationId), { officeBranch: newCity, building: newBuilding }));
+      cache.assets
+        .filter((a) => assetInLocation(a, l))
+        .forEach((a) => ops.push((b) => b.update(doc(db, 'assets', a.assetId), { buildingRoom: locationLabel(next), officeBranch: newCity })));
+      cache.employees
+        .filter((e) => same(e.officeBranch, locationLabel(l)))
+        .forEach((e) => ops.push((b) => b.update(doc(db, 'employees', e.employeeId), { officeBranch: locationLabel(next) })));
+    }
+    ops.push((b) =>
+      writeLog(b, makeLog('UPDATE_BUILDING', 'Location', oldBuilding, `Building "${oldBuilding}" (${oldCity}) renamed to "${newBuilding}" (${newCity}).`))
+    );
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update building.');
+    }
+    return { success: true, message: `Building updated across ${rooms.length} room(s)` };
   },
 
   async deleteBuilding(city: string, buildingName: string): Promise<{ success: boolean; message: string }> {
-    const store = getLocalStore();
-    const roomsInBuilding = store.locations.filter(
-      (l: any) => l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase()
-    );
-
-    // Check if any asset is assigned to any room in this building
-    for (const roomLoc of roomsInBuilding) {
-      const linkedAssets = store.assets.filter(
-        (a: any) => a.officeBranch?.toLowerCase() === city.toLowerCase() && a.buildingRoom?.toLowerCase().includes(roomLoc.room.toLowerCase())
-      );
-      if (linkedAssets.length > 0) {
-        throw new Error(`Cannot delete building "${buildingName}": Room "${roomLoc.room}" has ${linkedAssets.length} active asset(s). Reassign assets first.`);
-      }
+    requireRole(MANAGER_ROLES, 'delete buildings');
+    await ready();
+    const rooms = cache.locations.filter((l) => same(l.officeBranch, city) && same(l.building, buildingName));
+    for (const r of rooms) {
+      const n = cache.assets.filter((a) => assetInLocation(a, r)).length;
+      if (n) throw new Error(`Cannot delete "${buildingName}": room "${r.room}" has ${n} asset(s). Move them first.`);
+      const staff = cache.employees.filter((e) => same(e.officeBranch, locationLabel(r)));
+      if (staff.length) throw new Error(`Cannot delete "${buildingName}": ${staff[0].fullName} is stationed in "${r.room}".`);
     }
-
-    // Check if any employee is stationed in this building
-    const linkedEmployees = store.employees.filter(
-      (e: any) => e.officeBranch && e.officeBranch.toLowerCase().includes(buildingName.toLowerCase())
-    );
-    if (linkedEmployees.length > 0) {
-      throw new Error(`Cannot delete building "${buildingName}": Has ${linkedEmployees.length} stationed employee(s) (${linkedEmployees.map((e: any) => e.fullName).slice(0, 2).join(', ')}). Reassign staff first.`);
+    const ops: Array<(b: WriteBatch) => void> = rooms.map((r) => (b) => b.delete(doc(db, 'locations', r.locationId)));
+    ops.push((b) => writeLog(b, makeLog('DELETE_BUILDING', 'Location', buildingName, `Building "${buildingName}" in ${city} (${rooms.length} rooms) deleted.`)));
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete building.');
     }
-
-    const data = await safeFetch<any>('/buildings/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ city, buildingName })
-    });
-
-    // Delete all room location records under this building
-    const deletedCount = roomsInBuilding.length;
-    const deletedIds: string[] = roomsInBuilding.map((r: any) => r.locationId);
-    store.locations = store.locations.filter((l: any) => {
-      return !(l.officeBranch?.toLowerCase() === city.toLowerCase() && l.building?.toLowerCase() === buildingName.toLowerCase());
-    });
-
-    saveLocalStore(store);
-    await Promise.all(deletedIds.map((id: string) => deleteLocationFromFirestore(id).catch(() => {})));
-
-    if (data && data.success) return data;
-    return { success: true, message: `Building "${buildingName}" in ${city} (${deletedCount} rooms) deleted successfully.` };
+    return { success: true, message: `Building "${buildingName}" (${rooms.length} rooms) deleted.` };
   },
 
+  // ----- consumables -----
   async getConsumables(): Promise<ConsumableItem[]> {
-    const data = await safeFetch<{ success: boolean; consumables: ConsumableItem[] }>(`/consumables`);
-    if (data && data.success) return data.consumables;
-    const cloudCons = await fetchConsumablesFromFirestore();
-    if (cloudCons && cloudCons.length > 0) {
-      const store = getLocalStore();
-      store.consumables = cloudCons;
-      saveLocalStore(store);
-      return cloudCons;
-    }
-    return getLocalStore().consumables;
+    await ready();
+    return [...cache.consumables];
   },
 
-  async adjustConsumable(payload: any): Promise<any> {
-    const data = await safeFetch<any>(`/consumables/adjust`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const store = getLocalStore();
-    const item = (store.consumables || []).find((c: any) => c.itemCode === payload.itemCode);
-    if (item) {
-      item.currentStock = Math.max(0, item.currentStock + Number(payload.deltaQty));
-      item.lastUpdated = new Date().toISOString();
-      saveLocalStore(store);
-      saveConsumableToFirestore(item).catch(() => {});
-    }
-    if (data && data.success) return data;
-    return { success: true, message: 'Stock adjusted' };
+  suggestConsumableCode(): string {
+    return nextSequential('CON-', cache.consumables.map((c) => c.itemCode));
   },
 
   async createConsumable(payload: Partial<ConsumableItem>): Promise<{ success: boolean; message: string; item: ConsumableItem }> {
-    const data = await safeFetch<any>(`/consumables`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const store = getLocalStore();
-    let code = payload.itemCode?.trim().toUpperCase();
-    if (!code) {
-      const highestNum = (store.consumables || []).reduce((max: number, c: any) => {
-        const match = c.itemCode?.match(/\d+/);
-        return match ? Math.max(max, parseInt(match[0], 10)) : max;
-      }, 0);
-      code = `CON-${String(highestNum + 1).padStart(3, '0')}`;
-    }
-
-    const newItem: ConsumableItem = {
+    requireRole(MANAGER_ROLES, 'add consumables');
+    await ready();
+    const name = str(payload.itemName).trim();
+    if (!name) throw new Error('Item name is required.');
+    const code = norm(payload.itemCode) || api.suggestConsumableCode();
+    const stock = num(payload.currentStock);
+    if (stock < 0) throw new Error('Opening stock cannot be negative.');
+    const item: ConsumableItem = {
       itemCode: code,
-      itemName: payload.itemName?.trim() || 'New Supply Item',
-      category: payload.category?.trim() || 'Office Supplies',
-      unit: payload.unit?.trim() || 'Unit',
-      openingBalance: Number(payload.openingBalance) || Number(payload.currentStock) || 0,
-      currentStock: Number(payload.currentStock) || 0,
-      minimumThreshold: Number(payload.minimumThreshold) || 5,
-      unitCost: Number(payload.unitCost) || 0,
-      location: payload.location?.trim() || 'Central Store - Shelf 1',
-      supplier: payload.supplier?.trim() || 'General Supplier',
-      lastUpdated: new Date().toISOString()
+      itemName: name,
+      category: str(payload.category).trim() || 'General Supplies',
+      unit: str(payload.unit).trim() || 'Unit',
+      openingBalance: stock,
+      currentStock: stock,
+      minimumThreshold: Math.max(0, num(payload.minimumThreshold)),
+      unitCost: Math.max(0, num(payload.unitCost)),
+      location: str(payload.location).trim(),
+      supplier: str(payload.supplier).trim(),
+      lastUpdated: nowIso()
     };
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'consumables', code);
+        if ((await t.get(ref)).exists()) throw new Error(`Item code ${code} already exists.`);
+        t.set(ref, item);
+        writeLog(t, makeLog('CREATE_CONSUMABLE', 'Consumable', code, `Consumable "${name}" (${code}) added with ${stock} ${item.unit}.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to add consumable.');
+    }
+    return { success: true, message: `Consumable ${name} added`, item };
+  },
 
-    if (!Array.isArray(store.consumables)) store.consumables = [];
-    store.consumables = store.consumables.filter((c: any) => c.itemCode !== code);
-    store.consumables.push(newItem);
-
-    const log: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'CREATE_CONSUMABLE',
-      recordType: 'Consumable',
-      recordId: code,
-      details: `Added new consumable supply item "${newItem.itemName}" (${code}). Stock: ${newItem.currentStock} ${newItem.unit}s.`
-    };
-    if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-    store.activityLogs.unshift(log);
-    saveActivityLogToFirestore(log).catch(() => {});
-
-    saveLocalStore(store);
-    saveConsumableToFirestore(newItem).catch(() => {});
-
-    if (data && data.success && data.item) return data;
-    return { success: true, message: `Consumable ${newItem.itemName} registered successfully`, item: newItem };
+  async adjustConsumable(payload: { itemCode: string; deltaQty: number; reason?: string; employeeId?: string }): Promise<{ success: boolean; message: string; item: ConsumableItem }> {
+    requireRole(MANAGER_ROLES, 'adjust stock');
+    await ready();
+    const delta = Math.trunc(num(payload.deltaQty));
+    if (!delta) throw new Error('Quantity must be at least 1.');
+    const emp = payload.employeeId ? findEmployee(payload.employeeId) : undefined;
+    let saved!: ConsumableItem;
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'consumables', norm(payload.itemCode));
+        const snap = await t.get(ref);
+        if (!snap.exists()) throw new Error('Consumable item not found.');
+        const item = normalizers.consumables(snap.data());
+        const newStock = item.currentStock + delta;
+        if (newStock < 0) throw new Error(`Not enough stock. Only ${item.currentStock} ${item.unit} available.`);
+        saved = { ...item, currentStock: newStock, lastUpdated: nowIso() };
+        t.set(ref, saved);
+        writeTx(
+          t,
+          makeTx({ assetId: item.itemCode, itemName: item.itemName, condition: 'Good' }, delta > 0 ? 'STOCK_RECEIVED' : 'STOCK_ADJUSTED', 'Available', 'Available', {
+            employeeId: emp?.employeeId || '',
+            employeeName: emp?.fullName || '',
+            quantity: Math.abs(delta),
+            notes: `${delta > 0 ? 'Received' : 'Issued'} ${Math.abs(delta)} ${item.unit}. ${payload.reason || ''} (stock ${item.currentStock} → ${newStock})`.trim()
+          })
+        );
+        writeLog(
+          t,
+          makeLog(
+            delta > 0 ? 'RESTOCK_CONSUMABLE' : 'ISSUE_CONSUMABLE',
+            'Consumable',
+            item.itemCode,
+            `${delta > 0 ? 'Received' : 'Issued'} ${Math.abs(delta)} ${item.unit} of ${item.itemName}${emp ? ` to ${emp.fullName}` : ''}. Stock now ${newStock}.`
+          )
+        );
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to adjust stock.');
+    }
+    return { success: true, message: 'Stock adjusted', item: saved };
   },
 
   async deleteConsumable(itemCode: string): Promise<{ success: boolean; message: string }> {
-    const cleanCode = itemCode.trim().toUpperCase();
-    const data = await safeFetch<any>(`/consumables/${encodeURIComponent(cleanCode)}`, {
-      method: 'DELETE'
-    });
-    const store = getLocalStore();
-    const idx = (store.consumables || []).findIndex((c: any) => c.itemCode?.toUpperCase() === cleanCode);
-    if (idx !== -1) {
-      const removed = store.consumables.splice(idx, 1)[0];
-      const delLog: ActivityLog = {
-        logId: `LOG-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        userId: store.user.userId,
-        userName: store.user.name,
-        userRole: store.user.role,
-        action: 'DELETE_CONSUMABLE',
-        recordType: 'Consumable',
-        recordId: cleanCode,
-        details: `Deleted consumable item "${removed?.itemName || cleanCode}" (${cleanCode}).`
-      };
-      if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-      store.activityLogs.unshift(delLog);
-      saveActivityLogToFirestore(delLog).catch(() => {});
-      saveLocalStore(store);
-      deleteConsumableFromFirestore(cleanCode).catch(() => {});
-      return { success: true, message: `Consumable ${cleanCode} deleted.` };
+    requireRole(MANAGER_ROLES, 'delete consumables');
+    await ready();
+    const item = cache.consumables.find((c) => same(c.itemCode, itemCode));
+    if (!item) throw new Error('Consumable item not found.');
+    const b = newBatch();
+    b.delete(doc(db, 'consumables', item.itemCode));
+    writeLog(b, makeLog('DELETE_CONSUMABLE', 'Consumable', item.itemCode, `Consumable "${item.itemName}" (${item.itemCode}) deleted.`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to delete consumable.');
     }
-    if (data && data.success) return data;
-    return { success: true, message: 'Consumable deleted' };
+    return { success: true, message: `Consumable ${item.itemCode} deleted.` };
   },
 
-  async getTransactions(filters?: any): Promise<AssetTransaction[]> {
-    const data = await safeFetch<{ success: boolean; transactions: AssetTransaction[] }>(`/transactions`);
-    if (data && data.success) return data.transactions;
-    const cloudTx = await fetchTransactionsFromFirestore();
-    if (cloudTx && cloudTx.length > 0) {
-      const store = getLocalStore();
-      store.transactions = cloudTx;
-      saveLocalStore(store);
-      return cloudTx;
-    }
-    return getLocalStore().transactions;
+  // ----- history -----
+  async getTransactions(_filters?: unknown): Promise<AssetTransaction[]> {
+    await ready();
+    return [...cache.transactions];
   },
 
   async getActivityLogs(): Promise<ActivityLog[]> {
-    const data = await safeFetch<{ success: boolean; logs: ActivityLog[] }>(`/activity-logs`);
-    if (data && data.success) return data.logs;
-    const cloudLogs = await fetchActivityLogsFromFirestore();
-    if (cloudLogs && cloudLogs.length > 0) {
-      const store = getLocalStore();
-      store.activityLogs = cloudLogs;
-      saveLocalStore(store);
-      return cloudLogs;
-    }
-    return getLocalStore().activityLogs;
+    await ready();
+    return [...cache.activityLogs];
   },
 
   async clearActivityLogs(): Promise<{ success: boolean; message: string }> {
-    const store = getLocalStore();
-    if (store.user.role !== 'Super Admin') {
-      throw new Error('Unauthorized: Only Super Admin (Executive Director) has permission to clear audit history.');
-    }
-
-    // 1. Clear from Firestore
+    const u = requireRole(['Super Admin'], 'clear the audit trail');
+    await ready();
+    const ops: Array<(b: WriteBatch) => void> = cache.activityLogs.map((l) => (b) => b.delete(doc(db, 'activityLogs', l.logId)));
+    ops.push((b) => writeLog(b, makeLog('AUDIT_TRAIL_CLEARED', 'System', 'AUDIT-HISTORY', `Audit trail cleared by ${u.name}.`)));
     try {
-      await clearActivityLogsFromFirestore(store.user);
-    } catch (err) {
-      console.warn('[Firestore] Note clearing cloud logs:', err);
+      await commitInChunks(ops);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to clear audit trail.');
     }
-
-    // 2. Clear from LocalStore and record reset marker
-    const resetLog: ActivityLog = {
-      logId: `LOG-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: store.user.userId,
-      userName: store.user.name,
-      userRole: store.user.role,
-      action: 'AUDIT_TRAIL_CLEARED',
-      recordType: 'System',
-      recordId: 'AUDIT-HISTORY',
-      details: `Audit trail history was cleared by Super Admin (${store.user.name}).`
-    };
-    store.activityLogs = [resetLog];
-    saveLocalStore(store);
-
-    // 3. Inform backend if running
-    safeFetch<any>('/activity-logs/clear', { method: 'POST' }).catch(() => {});
-
-    return { success: true, message: 'Audit trail history was successfully cleared.' };
+    return { success: true, message: 'Audit trail cleared.' };
   },
 
   subscribeToCloudSync(callback: (payload: RealtimeSyncPayload) => void): () => void {
-    return subscribeToWANGDatabase((payload) => {
-      // Update local storage so cache is always warm
-      const store = getLocalStore();
-      if (payload.assets) store.assets = payload.assets;
-      if (payload.employees) store.employees = payload.employees;
-      if (payload.categories) store.categories = payload.categories;
-      if (payload.locations) store.locations = payload.locations;
-      if (payload.consumables) store.consumables = payload.consumables;
-      if (payload.transactions) store.transactions = payload.transactions;
-      if (payload.requests) store.requests = payload.requests;
-      if (payload.maintenance) store.maintenance = payload.maintenance;
-      if (payload.activityLogs) store.activityLogs = payload.activityLogs;
-      saveLocalStore(store);
-
-      // Trigger UI update
-      callback(payload);
-    });
+    startSync();
+    subscribers.add(callback);
+    return () => {
+      subscribers.delete(callback);
+    };
   },
 
+  // ----- requests -----
   async getRequests(): Promise<AssetRequest[]> {
-    const data = await safeFetch<{ success: boolean; requests: AssetRequest[] }>(`/requests`);
-    if (data && data.success) return data.requests;
-    const cloudReqs = await fetchRequestsFromFirestore();
-    if (cloudReqs && cloudReqs.length > 0) {
-      const store = getLocalStore();
-      store.requests = cloudReqs;
-      saveLocalStore(store);
-      return cloudReqs;
-    }
-    return getLocalStore().requests;
+    await ready();
+    return [...cache.requests];
   },
 
-  async createRequest(req: any): Promise<AssetRequest> {
-    const data = await safeFetch<any>(`/requests`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req)
-    });
-    const store = getLocalStore();
+  async createRequest(req: Partial<AssetRequest>): Promise<AssetRequest> {
+    await ready();
+    const emp = req.requestingEmployeeId ? findEmployee(req.requestingEmployeeId) : undefined;
+    if (!emp) throw new Error('Select the employee making the request.');
+    const me = currentUser();
+    if (!MANAGER_ROLES.includes(me.role) && !APPROVER_ROLES.includes(me.role) && me.employeeId && !same(me.employeeId, emp.employeeId)) {
+      throw new Error('You can only submit requests for yourself.');
+    }
+    if (!str(req.itemDescription).trim()) throw new Error('Describe the item needed.');
+    if (!str(req.businessJustification).trim()) throw new Error('Business justification is required.');
+    const quantity = Math.trunc(num(req.quantity, 1));
+    if (quantity < 1) throw new Error('Quantity must be at least 1.');
+    const year = new Date().getFullYear();
+    const requestNumber = nextSequential(`REQ-${year}-`, cache.requests.map((r) => r.requestNumber), 4);
     const newReq: AssetRequest = {
-      requestId: req.requestId || `REQ-${Date.now()}`,
-      requestNumber: `REQ-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      requestingEmployeeId: req.requestingEmployeeId,
-      requestingEmployeeName: req.requestingEmployeeName,
-      department: req.department,
-      itemType: req.itemType,
-      itemDescription: req.itemDescription,
-      quantity: req.quantity,
-      businessJustification: req.businessJustification,
-      requestDate: new Date().toISOString(),
-      requiredDate: req.requiredDate || new Date().toISOString().split('T')[0],
+      requestId: uniqueId('REQ'),
+      requestNumber,
+      requestingEmployeeId: emp.employeeId,
+      requestingEmployeeName: emp.fullName,
+      department: emp.department,
+      itemType: req.itemType === 'Consumable' ? 'Consumable' : 'Fixed Asset',
+      itemDescription: str(req.itemDescription).trim(),
+      quantity,
+      businessJustification: str(req.businessJustification).trim(),
+      requestDate: nowIso(),
+      requiredDate: req.requiredDate || todayStr(),
       status: 'Pending'
     };
-    if (!Array.isArray(store.requests)) store.requests = [];
-    store.requests.unshift(newReq);
-    saveLocalStore(store);
-    saveRequestToFirestore(newReq).catch(() => {});
-    if (data && data.success) return data.request;
+    const b = newBatch();
+    b.set(doc(db, 'requests', newReq.requestId), newReq);
+    writeLog(b, makeLog('CREATE_REQUEST', 'Request', newReq.requestId, `${requestNumber}: ${emp.fullName} requested ${quantity} × ${newReq.itemDescription}.`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to submit request.');
+    }
     return newReq;
   },
 
-  async updateRequestStatus(id: string, status: any, extra?: any): Promise<any> {
-    const data = await safeFetch<any>(`/requests/${id}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, ...extra })
-    });
-    const store = getLocalStore();
-    const req = (store.requests || []).find((r: any) => r.requestId === id);
-    if (req) {
-      req.status = status;
-      if (extra?.rejectionReason) req.rejectionReason = extra.rejectionReason;
-      if (extra?.fulfilledAssetId) req.fulfilledAssetId = extra.fulfilledAssetId;
-      saveLocalStore(store);
-      saveRequestToFirestore(req).catch(() => {});
-    }
-    if (data && data.success) return data.request;
-    return { success: true };
-  },
-
-  async getMaintenance(): Promise<MaintenanceRecord[]> {
-    const data = await safeFetch<{ success: boolean; maintenance: MaintenanceRecord[] }>(`/maintenance`);
-    if (data && data.success) return data.maintenance;
-    const cloudMnt = await fetchMaintenanceFromFirestore();
-    if (cloudMnt && cloudMnt.length > 0) {
-      const store = getLocalStore();
-      store.maintenance = cloudMnt;
-      saveLocalStore(store);
-      return cloudMnt;
-    }
-    return getLocalStore().maintenance;
-  },
-
-  async createMaintenance(data: any): Promise<any> {
-    const res = await safeFetch<any>(`/maintenance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    const store = getLocalStore();
-    const newMnt: MaintenanceRecord = {
-      maintenanceId: `MNT-${Date.now()}`,
-      assetId: data.assetId,
-      assetName: data.assetName || 'Equipment',
-      issueDescription: data.issueDescription,
-      reportedDate: new Date().toISOString().split('T')[0],
-      serviceProvider: data.serviceProvider || 'Technical Services',
-      repairCost: Number(data.repairCost) || 0,
-      workPerformed: '',
-      status: 'Reported',
-      warrantyStatus: 'Active',
-      reportedBy: store.user.name
-    };
-    if (!Array.isArray(store.maintenance)) store.maintenance = [];
-    store.maintenance.unshift(newMnt);
-    saveLocalStore(store);
-    saveMaintenanceToFirestore(newMnt).catch(() => {});
-    if (res && res.success) return res.maintenance;
-    return newMnt;
-  },
-
-  async updateMaintenance(id: string, updates: any): Promise<void> {
-    await safeFetch<any>(`/maintenance/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-    const store = getLocalStore();
-    const mnt = (store.maintenance || []).find((m: any) => m.maintenanceId === id);
-    if (mnt) {
-      Object.assign(mnt, updates);
-      saveLocalStore(store);
-      saveMaintenanceToFirestore(mnt).catch(() => {});
-
-      // Cross-section: If maintenance is completed, restore asset to Available
-      if (updates.status === 'Completed' && mnt.assetId) {
-        const asset = store.assets.find((a: any) => a.assetId.toUpperCase() === mnt.assetId.toUpperCase());
-        if (asset && asset.status === 'Under Maintenance') {
-          asset.status = 'Available';
-          asset.condition = 'Good';
-          asset.lastUpdated = new Date().toISOString();
-          saveLocalStore(store);
-          saveAssetToFirestore(asset).catch(() => {});
-
-          const mntLog: ActivityLog = {
-            logId: `LOG-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            userId: store.user.userId,
-            userName: store.user.name,
-            userRole: store.user.role,
-            action: 'COMPLETE_MAINTENANCE',
-            recordType: 'Asset',
-            recordId: asset.assetId,
-            details: `Maintenance completed for asset ${asset.assetId} (${asset.itemName}). Restored to Available.`
-          };
-          if (!Array.isArray(store.activityLogs)) store.activityLogs = [];
-          store.activityLogs.unshift(mntLog);
-          saveActivityLogToFirestore(mntLog).catch(() => {});
+  async updateRequestStatus(
+    id: string,
+    status: AssetRequest['status'],
+    extra?: { rejectionReason?: string; fulfilledAssetId?: string }
+  ): Promise<AssetRequest> {
+    const u = requireRole(APPROVER_ROLES, 'approve or reject requests');
+    await ready();
+    let saved!: AssetRequest;
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'requests', id);
+        const snap = await t.get(ref);
+        if (!snap.exists()) throw new Error('Request not found.');
+        const r = snap.data() as AssetRequest;
+        const allowed: Record<string, AssetRequest['status'][]> = {
+          Pending: ['Approved', 'Rejected'],
+          Approved: ['Fulfilled', 'Rejected'],
+          Rejected: [],
+          Fulfilled: []
+        };
+        if (!allowed[r.status]?.includes(status)) throw new Error(`A ${r.status} request cannot be marked ${status}.`);
+        saved = { ...r, status };
+        if (status === 'Approved' || status === 'Rejected') {
+          saved.approverId = u.userId;
+          saved.approverName = u.name;
+          saved.decisionDate = nowIso();
         }
-      }
+        if (status === 'Rejected' && extra?.rejectionReason) saved.rejectionReason = extra.rejectionReason;
+        if (status === 'Fulfilled' && extra?.fulfilledAssetId) saved.fulfilledAssetId = extra.fulfilledAssetId;
+        t.set(ref, saved);
+        writeLog(t, makeLog(`REQUEST_${status.toUpperCase()}`, 'Request', id, `${r.requestNumber} marked ${status} by ${u.name}.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update request.');
     }
+    return saved;
   },
 
+  // ----- maintenance -----
+  async getMaintenance(): Promise<MaintenanceRecord[]> {
+    await ready();
+    return [...cache.maintenance];
+  },
+
+  async createMaintenance(data: { assetId: string; issueDescription: string; serviceProvider?: string; repairCost?: number }): Promise<MaintenanceRecord> {
+    const u = requireRole(MANAGER_ROLES, 'log maintenance');
+    await ready();
+    if (!str(data.issueDescription).trim()) throw new Error('Describe the fault.');
+    let record!: MaintenanceRecord;
+    try {
+      await runTx(async (t) => {
+        const a = await readAssetInTx(t, data.assetId);
+        if (a.status === 'Issued') throw new Error(`${a.assetId} is issued to ${a.assignedTo}. Return it (condition "Needs Repair") before sending it for repair.`);
+        if (!['Available', 'Under Maintenance'].includes(a.status)) throw new Error(`${a.assetId} is "${a.status}" and cannot be sent for maintenance.`);
+        record = {
+          maintenanceId: uniqueId('MNT'),
+          assetId: a.assetId,
+          assetName: a.itemName,
+          issueDescription: data.issueDescription.trim(),
+          reportedDate: todayStr(),
+          serviceProvider: str(data.serviceProvider).trim(),
+          repairCost: Math.max(0, num(data.repairCost)),
+          workPerformed: '',
+          status: 'In Progress',
+          warrantyStatus: warrantyStatusFor(a),
+          reportedBy: u.name
+        };
+        t.set(doc(db, 'maintenance', record.maintenanceId), record);
+        if (a.status !== 'Under Maintenance') {
+          const next: Asset = { ...a, status: 'Under Maintenance', lastUpdated: nowIso() };
+          t.set(doc(db, 'assets', a.assetId), next);
+          writeTx(t, makeTx(next, 'MAINTENANCE_SENT', a.status, 'Under Maintenance', { notes: record.issueDescription, location: a.buildingRoom }));
+        }
+        writeLog(t, makeLog('CREATE_MAINTENANCE', 'Maintenance', record.maintenanceId, `Repair ticket for ${a.assetId} (${a.itemName}): ${record.issueDescription}`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to create maintenance ticket.');
+    }
+    return record;
+  },
+
+  async updateMaintenance(id: string, updates: Partial<MaintenanceRecord>): Promise<MaintenanceRecord> {
+    requireRole(MANAGER_ROLES, 'update maintenance');
+    await ready();
+    let saved!: MaintenanceRecord;
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'maintenance', id);
+        const snap = await t.get(ref);
+        if (!snap.exists()) throw new Error('Maintenance ticket not found.');
+        const m = normalizers.maintenance(snap.data());
+        if (m.status === 'Completed' || m.status === 'Cancelled') throw new Error(`This ticket is already ${m.status}.`);
+        const closing = updates.status === 'Completed' || updates.status === 'Cancelled';
+        // Read asset before any write (Firestore transaction rule).
+        const assetSnap = closing ? await t.get(doc(db, 'assets', m.assetId)) : null;
+
+        saved = { ...m, ...updates, maintenanceId: m.maintenanceId, assetId: m.assetId };
+        if (updates.repairCost !== undefined) saved.repairCost = Math.max(0, num(updates.repairCost));
+        if (closing && !saved.completionDate) saved.completionDate = todayStr();
+        t.set(ref, saved);
+
+        if (closing && assetSnap?.exists()) {
+          const a = normalizers.assets(assetSnap.data());
+          const otherOpen = cache.maintenance.some(
+            (x) => x.maintenanceId !== m.maintenanceId && same(x.assetId, m.assetId) && x.status !== 'Completed' && x.status !== 'Cancelled'
+          );
+          if (a.status === 'Under Maintenance' && !otherOpen) {
+            const next: Asset = {
+              ...a,
+              status: 'Available',
+              condition: updates.status === 'Completed' ? 'Good' : a.condition,
+              lastUpdated: nowIso()
+            };
+            t.set(doc(db, 'assets', a.assetId), next);
+            writeTx(
+              t,
+              makeTx(next, 'MAINTENANCE_RETURNED', 'Under Maintenance', 'Available', {
+                notes: updates.status === 'Completed' ? saved.workPerformed || 'Repaired' : 'Repair ticket cancelled',
+                location: a.buildingRoom
+              })
+            );
+          }
+        }
+        writeLog(t, makeLog('UPDATE_MAINTENANCE', 'Maintenance', id, `Ticket ${id} for ${m.assetId} → ${saved.status}.`));
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to update maintenance ticket.');
+    }
+    return saved;
+  },
+
+  // ----- physical audits -----
   async getAudits(): Promise<PhysicalAudit[]> {
-    const data = await safeFetch<{ success: boolean; audits: PhysicalAudit[] }>(`/audits`);
-    if (data && data.success) return data.audits;
-    return getLocalStore().audits;
+    await ready();
+    return [...cache.audits];
   },
 
   async startAudit(name: string, branch: string, locationOrCategory: string): Promise<PhysicalAudit> {
-    const data = await safeFetch<any>(`/audits`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, branch, locationOrCategory })
-    });
-    if (data && data.success) return data.audit;
-    return { auditId: `AUD-${Date.now()}`, auditName: name, officeBranch: branch, locationOrCategory, startDate: new Date().toISOString(), status: 'In Progress', createdBy: 'Admin', totalExpected: 5, totalScanned: 0, totalMissing: 5, totalDiscrepancies: 0, items: [] };
+    const u = requireRole(MANAGER_ROLES, 'start audits');
+    await ready();
+    if (!name.trim()) throw new Error('Audit name is required.');
+    const inScope = cache.assets.filter(
+      (a) => !['Retired', 'Archived'].includes(a.status) && (branch === 'All Branches' || same(a.officeBranch, branch))
+    );
+    if (!inScope.length) throw new Error(`No active assets are registered${branch === 'All Branches' ? '' : ` in ${branch}`}.`);
+    const items: PhysicalAuditItem[] = inScope.map((a) => ({
+      assetId: a.assetId,
+      expectedStatus: a.status,
+      expectedLocation: a.buildingRoom,
+      expectedEmployee: a.assignedTo,
+      isFound: false,
+      isDiscrepancy: false
+    }));
+    const audit: PhysicalAudit = {
+      auditId: uniqueId('AUD'),
+      auditName: name.trim(),
+      officeBranch: branch,
+      locationOrCategory: locationOrCategory || 'All Categories',
+      startDate: nowIso(),
+      status: 'In Progress',
+      createdBy: u.name,
+      totalExpected: items.length,
+      totalScanned: 0,
+      totalMissing: items.length,
+      totalDiscrepancies: 0,
+      items
+    };
+    const b = newBatch();
+    b.set(doc(db, 'audits', audit.auditId), audit);
+    writeLog(b, makeLog('START_AUDIT', 'Audit', audit.auditId, `Audit "${audit.auditName}" started for ${branch} (${items.length} assets).`));
+    try {
+      await b.commit();
+    } catch (e) {
+      throw friendlyError(e, 'Failed to start audit.');
+    }
+    return audit;
   },
 
   async scanAuditItem(auditId: string, assetId: string, observedCondition?: AssetCondition, notes?: string): Promise<PhysicalAudit> {
-    const data = await safeFetch<any>(`/audits/${auditId}/scan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assetId, observedCondition, notes })
-    });
-    if (data && data.success) return data.audit;
-    throw new Error('Audit scan failed');
+    const u = requireRole(MANAGER_ROLES, 'record audit scans');
+    await ready();
+    const id = norm(assetId);
+    let saved!: PhysicalAudit;
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'audits', auditId);
+        const snap = await t.get(ref);
+        if (!snap.exists()) throw new Error('Audit not found.');
+        const audit = normalizers.audits(snap.data());
+        if (audit.status !== 'In Progress') throw new Error(`This audit is ${audit.status}; scans are closed.`);
+        const asset = cache.assets.find((a) => same(a.assetId, id));
+        if (!asset) throw new Error(`${id} is not a registered asset.`);
+        const items = audit.items.map((i) => ({ ...i }));
+        let item = items.find((i) => same(i.assetId, id));
+        if (item?.isFound) throw new Error(`${id} was already verified at ${new Date(item.scannedAt || '').toLocaleTimeString()}.`);
+        if (!item) {
+          item = {
+            assetId: asset.assetId,
+            expectedStatus: asset.status,
+            expectedLocation: '(not expected in this audit)',
+            expectedEmployee: asset.assignedTo,
+            isFound: false,
+            isDiscrepancy: true,
+            isUnexpected: true
+          } as PhysicalAuditItem;
+          items.push(item);
+        }
+        const cond = observedCondition && AUDIT_CONDITIONS.includes(observedCondition) ? observedCondition : asset.condition;
+        item.isFound = true;
+        item.scannedAt = nowIso();
+        item.scannedBy = u.name;
+        item.observedCondition = cond;
+        item.notes = notes?.trim() || '';
+        item.isDiscrepancy =
+          Boolean((item as any).isUnexpected) || cond !== asset.condition || item.expectedStatus === 'Missing' || item.expectedStatus === 'Lost';
+
+        const expected = items.filter((i) => !(i as any).isUnexpected);
+        saved = {
+          ...audit,
+          items,
+          totalExpected: expected.length,
+          totalScanned: items.filter((i) => i.isFound).length,
+          totalMissing: expected.filter((i) => !i.isFound).length,
+          totalDiscrepancies: items.filter((i) => i.isDiscrepancy).length
+        };
+        t.set(ref, saved);
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to record scan.');
+    }
+    return saved;
   },
 
+  async finishAudit(auditId: string, status: 'Approved' | 'Cancelled'): Promise<PhysicalAudit> {
+    const u = requireRole(MANAGER_ROLES, 'close audits');
+    await ready();
+    let saved!: PhysicalAudit;
+    try {
+      await runTx(async (t) => {
+        const ref = doc(db, 'audits', auditId);
+        const snap = await t.get(ref);
+        if (!snap.exists()) throw new Error('Audit not found.');
+        const audit = normalizers.audits(snap.data());
+        if (audit.status !== 'In Progress' && audit.status !== 'Review') throw new Error(`This audit is already ${audit.status}.`);
+        saved = { ...audit, status, endDate: nowIso() };
+        t.set(ref, saved);
+        writeLog(
+          t,
+          makeLog(
+            status === 'Approved' ? 'APPROVE_AUDIT' : 'CANCEL_AUDIT',
+            'Audit',
+            auditId,
+            `Audit "${audit.auditName}" ${status.toLowerCase()} by ${u.name}: ${audit.totalScanned}/${audit.totalExpected} verified, ${audit.totalMissing} not found, ${audit.totalDiscrepancies} discrepancies.`
+          )
+        );
+      });
+    } catch (e) {
+      throw friendlyError(e, 'Failed to close audit.');
+    }
+    return saved;
+  },
+
+  // ----- Google Sheets / export -----
   async getSheetsConfig(): Promise<GoogleSheetsSyncConfig> {
-    const data = await safeFetch<{ success: boolean; config: GoogleSheetsSyncConfig }>(`/sync/sheets/config`);
-    if (data && data.success) return data.config;
-    return getLocalStore().sheetsConfig;
+    await ready();
+    return (
+      sheetsConfigCache || {
+        spreadsheetId: '',
+        isConfigured: false,
+        tabsFound: { startHere: false, masterAssets: false, categories: false, employeesLocations: false, assetTransactions: false },
+        totalSyncedRows: 0,
+        autoSyncOnChange: false
+      }
+    );
   },
 
-  async testSheetsConnection(spreadsheetId: string): Promise<{ success: boolean; message: string; rowCount?: number }> {
-    const data = await safeFetch<any>(`/sync/sheets/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ spreadsheetId })
-    });
-    if (data) return data;
-    return { success: true, message: 'Connected successfully to Google Sheet', rowCount: 11 };
+  async testSheetsConnection(spreadsheetIdOrUrl: string): Promise<{ success: boolean; message: string; rowCount?: number }> {
+    requireRole(MANAGER_ROLES, 'configure Google Sheets');
+    const m = /\/d\/([a-zA-Z0-9-_]+)/.exec(spreadsheetIdOrUrl);
+    const id = (m ? m[1] : spreadsheetIdOrUrl).trim();
+    if (!/^[a-zA-Z0-9-_]{20,}$/.test(id)) {
+      return { success: false, message: 'That does not look like a Google Sheets ID. Copy the long code between /d/ and /edit in the sheet URL.' };
+    }
+    const cfg: GoogleSheetsSyncConfig = {
+      ...(await api.getSheetsConfig()),
+      spreadsheetId: id,
+      isConfigured: true,
+      lastSyncTimestamp: nowIso()
+    };
+    try {
+      await setDoc(doc(db, 'systemSettings', 'sheetsConfig'), cfg);
+    } catch (e) {
+      throw friendlyError(e, 'Failed to save spreadsheet ID.');
+    }
+    sheetsConfigCache = cfg;
+    return {
+      success: true,
+      message: 'Spreadsheet ID saved. Automatic two-way sync is not enabled yet: download each tab as CSV below and import it into the sheet (File → Import).'
+    };
   },
 
   async getWorkbookExport(): Promise<Record<string, string[][]>> {
-    const data = await safeFetch<{ success: boolean; workbook: any }>(`/sync/sheets/export`);
-    if (data && data.success) return data.workbook;
-    return { 'Master Assets': [['Asset ID', 'Item Name'], ['WANG-EPS-001', 'Dell Laptop']] };
+    await ready();
+    const employees = derivedEmployees();
+    return {
+      'Master Assets': [
+        ['Asset ID', 'Item Name', 'Category ID', 'Category Name', 'Brand', 'Model', 'Serial Number', 'Quantity', 'Unit', 'Purchase Date', 'Purchase Cost (PKR)', 'Supplier', 'City / Branch', 'Building - Room', 'Status', 'Condition', 'Assigned Employee ID', 'Assigned To', 'Due Date', 'Warranty Expiry', 'Invoice Link', 'Record Completion', 'Remarks', 'Last Updated'],
+        ...cache.assets.map((a) => [
+          a.assetId, a.itemName, a.categoryId, a.categoryName, a.brand, a.model, a.serialNumber, String(a.quantity), a.unit,
+          a.purchaseDate, String(a.purchaseCost), a.supplier, a.officeBranch, a.buildingRoom, a.status, a.condition,
+          a.status === 'Issued' ? a.assignedEmployeeId : '', a.status === 'Issued' ? a.assignedTo : '', str(a.dueDate),
+          a.warrantyExpiry, a.invoiceDocLink, a.recordCompletion, a.remarks, a.lastUpdated
+        ].map(csvCell))
+      ],
+      Categories: [
+        ['Category ID', 'Category Name', 'Description', 'Total Assets'],
+        ...derivedCategories().map((c) => [c.categoryId, c.categoryName, c.description, String(c.totalAssets)])
+      ],
+      Employees: [
+        ['Employee ID', 'Full Name', 'Department', 'Designation', 'Email', 'Phone', 'Station', 'Role', 'Active', 'Assets Held'],
+        ...employees.map((e) => [e.employeeId, e.fullName, e.department, e.designation, e.email, e.phone, e.officeBranch, str(e.role), e.activeStatus ? 'Yes' : 'No', String(e.assignedAssetCount)])
+      ],
+      Locations: [
+        ['Location ID', 'City / Branch', 'Building', 'Floor', 'Room', 'Store?', 'Assets', 'Description'],
+        ...derivedLocations().map((l) => [l.locationId, l.officeBranch, l.building, l.floor, l.room, l.isStore ? 'Yes' : 'No', String(l.assetCount), l.description])
+      ],
+      'Asset Transactions': [
+        ['Transaction ID', 'Date', 'Type', 'Asset ID', 'Asset Name', 'Employee ID', 'Employee Name', 'Previous Status', 'New Status', 'Condition', 'Quantity', 'Location', 'Performed By', 'Notes'],
+        ...cache.transactions.map((t) => [
+          t.transactionId, t.timestamp, t.transactionType, t.assetId, t.assetName, t.employeeId, t.employeeName, t.previousStatus,
+          t.newStatus, t.condition, t.quantity !== undefined ? String(t.quantity) : '', str(t.location), t.performedByName, t.notes
+        ].map(csvCell))
+      ],
+      Consumables: [
+        ['Item Code', 'Item Name', 'Category', 'Unit', 'Opening Balance', 'Current Stock', 'Minimum Threshold', 'Unit Cost (PKR)', 'Location', 'Supplier', 'Last Updated'],
+        ...cache.consumables.map((c) => [c.itemCode, c.itemName, c.category, c.unit, String(c.openingBalance), String(c.currentStock), String(c.minimumThreshold), String(c.unitCost), c.location, c.supplier, c.lastUpdated])
+      ]
+    };
   },
 
-  async importSheetsRows(rows: Record<string, string>[]): Promise<any> {
-    const data = await safeFetch<any>(`/sync/sheets/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows })
+  /** Imports rows shaped like the "Master Assets" export: new IDs are created, existing IDs updated (status/custody untouched). */
+  async importSheetsRows(rows: Record<string, string>[]): Promise<{ importedCount: number; updatedCount: number; skippedCount: number; errors: string[] }> {
+    requireRole(MANAGER_ROLES, 'import assets');
+    await ready();
+    let importedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const errors: string[] = [];
+    const ops: Array<(b: WriteBatch) => void> = [];
+    const ts = nowIso();
+    rows.forEach((row, i) => {
+      const id = norm(row['Asset ID']);
+      const name = str(row['Item Name']).trim();
+      if (!id || !name) {
+        skippedCount++;
+        errors.push(`Row ${i + 2}: Asset ID and Item Name are required.`);
+        return;
+      }
+      const cat = cache.categories.find((c) => same(c.categoryId, row['Category ID']) || same(c.categoryName, row['Category Name']));
+      if (!cat) {
+        skippedCount++;
+        errors.push(`Row ${i + 2} (${id}): category "${row['Category ID'] || row['Category Name'] || ''}" not found.`);
+        return;
+      }
+      const fields = {
+        itemName: name,
+        categoryId: cat.categoryId,
+        categoryName: cat.categoryName,
+        brand: str(row['Brand']),
+        model: str(row['Model']),
+        serialNumber: str(row['Serial Number']),
+        quantity: Math.max(1, num(row['Quantity'], 1)),
+        unit: str(row['Unit']) || 'Unit',
+        purchaseDate: str(row['Purchase Date']),
+        purchaseCost: Math.max(0, num(row['Purchase Cost (PKR)'] ?? row['Purchase Cost'])),
+        supplier: str(row['Supplier']),
+        officeBranch: str(row['City / Branch'] ?? row['Office Branch']),
+        buildingRoom: str(row['Building - Room'] ?? row['Location']),
+        condition: (AUDIT_CONDITIONS.includes(row['Condition'] as AssetCondition) ? row['Condition'] : 'Good') as AssetCondition,
+        warrantyExpiry: str(row['Warranty Expiry']),
+        invoiceDocLink: str(row['Invoice Link']),
+        remarks: str(row['Remarks']),
+        lastUpdated: ts
+      };
+      const existing = cache.assets.find((a) => same(a.assetId, id));
+      if (existing) {
+        updatedCount++;
+        ops.push((b) => b.update(doc(db, 'assets', existing.assetId), fields));
+      } else {
+        importedCount++;
+        const asset = normalizers.assets({ ...fields, assetId: id, status: 'Available', recordCompletion: 'Complete', createdAt: ts });
+        ops.push((b) => b.set(doc(db, 'assets', id), asset));
+        ops.push((b) => writeTx(b, makeTx(asset, 'INITIAL_IMPORT', 'Available', 'Available', { notes: 'Imported from spreadsheet', location: asset.buildingRoom })));
+      }
     });
-    if (data) return data;
-    return { importedCount: 0, updatedCount: 0, skippedCount: 0, errors: [] };
+    if (ops.length) {
+      ops.push((b) => writeLog(b, makeLog('SHEETS_IMPORT', 'SheetsSync', 'IMPORT', `Imported ${importedCount} new and updated ${updatedCount} assets (${skippedCount} skipped).`)));
+      try {
+        await commitInChunks(ops);
+      } catch (e) {
+        throw friendlyError(e, 'Import failed.');
+      }
+    }
+    return { importedCount, updatedCount, skippedCount, errors };
   },
 
-  async resetDemoData(): Promise<void> {
+  // ----- backup -----
+  exportFullBackup(): string {
+    return JSON.stringify(
+      {
+        exportedAt: nowIso(),
+        app: 'WANG Inventory',
+        version: 2,
+        assets: cache.assets,
+        employees: cache.employees.map(({ assignedAssetCount, ...e }) => e),
+        categories: cache.categories.map(({ totalAssets, ...c }) => c),
+        locations: cache.locations.map(({ assetCount, ...l }) => l),
+        consumables: cache.consumables,
+        transactions: cache.transactions,
+        requests: cache.requests,
+        maintenance: cache.maintenance,
+        audits: cache.audits,
+        activityLogs: cache.activityLogs
+      },
+      null,
+      2
+    );
+  },
+
+  /** Restores a backup by upserting every record (nothing is deleted). */
+  async importFullBackup(jsonContent: string): Promise<{ success: boolean; message: string }> {
+    requireRole(['Super Admin'], 'restore backups');
+    await ready();
+    let parsed: any;
     try {
-      await fetch(`${BASE_URL}/reset-demo`, { method: 'POST' });
-    } catch (e) {
-      localStorage.removeItem('WANG_INVENTORY_LOCAL_DB');
+      parsed = JSON.parse(jsonContent);
+    } catch {
+      return { success: false, message: 'The file is not valid JSON.' };
     }
+    if (!parsed || !Array.isArray(parsed.assets)) return { success: false, message: 'Invalid backup file: no assets list found.' };
+    const keys: Record<CollectionName, string> = {
+      assets: 'assetId',
+      employees: 'employeeId',
+      categories: 'categoryId',
+      locations: 'locationId',
+      consumables: 'itemCode',
+      transactions: 'transactionId',
+      requests: 'requestId',
+      maintenance: 'maintenanceId',
+      audits: 'auditId',
+      activityLogs: 'logId'
+    };
+    const ops: Array<(b: WriteBatch) => void> = [];
+    let total = 0;
+    for (const name of COLLECTIONS) {
+      const list = Array.isArray(parsed[name]) ? parsed[name] : [];
+      for (const rec of list) {
+        const id = str(rec?.[keys[name]]).trim();
+        if (!id || id.includes('/')) continue;
+        total++;
+        ops.push((b) => b.set(doc(db, name, id), rec));
+      }
+    }
+    ops.push((b) => writeLog(b, makeLog('RESTORE_BACKUP', 'System', 'BACKUP', `Backup restored (${total} records).`)));
+    try {
+      await commitInChunks(ops);
+    } catch (e) {
+      return { success: false, message: friendlyError(e, 'Restore failed.').message };
+    }
+    return { success: true, message: `Backup restored: ${total} records (${parsed.assets.length} assets).` };
   }
 };

@@ -52,6 +52,11 @@ interface SidebarProps {
   onCloseMobile?: () => void;
 }
 
+/** Employees and Approvers only see the self-service screens. */
+export const isRestrictedRole = (role: UserRole) => role === 'Employee' || role === 'Approver';
+export const RESTRICTED_TABS: ViewTab[] = ['dashboard', 'scan', 'inventory', 'consumables', 'categories', 'employees', 'locations', 'requests', 'reports'];
+export const isTabAllowed = (tab: ViewTab, role: UserRole) => !isRestrictedRole(role) || RESTRICTED_TABS.includes(tab);
+
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
   onSelectTab,
@@ -60,7 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpenMobile,
   onCloseMobile
 }) => {
-  const isEmployee = userRole === 'Employee';
+  const isEmployee = isRestrictedRole(userRole);
 
   const navItems: {
     id: ViewTab;

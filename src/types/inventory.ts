@@ -218,6 +218,7 @@ export interface PhysicalAuditItem {
   observedLocation?: string;
   isFound: boolean;
   isDiscrepancy: boolean;
+  isUnexpected?: boolean; // scanned but not part of the audit's expected list
   notes?: string;
 }
 

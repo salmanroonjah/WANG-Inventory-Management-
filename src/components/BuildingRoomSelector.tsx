@@ -28,18 +28,20 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
 
   // Extract unique building groups from registered locations
   const buildingsMap = useMemo(() => {
-    const map = new Map<string, { building: string; city: string; rooms: LocationRecord[] }>();
+    const map = new Map<string, { key: string; building: string; city: string; rooms: LocationRecord[] }>();
     locations.forEach(loc => {
       const bName = loc.building?.trim();
       if (!bName) return;
-      if (!map.has(bName)) {
-        map.set(bName, {
+      const key = `${(loc.officeBranch || '').trim()}|||${bName}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
           building: bName,
           city: loc.officeBranch || '',
           rooms: []
         });
       }
-      map.get(bName)!.rooms.push(loc);
+      map.get(key)!.rooms.push(loc);
     });
     return map;
   }, [locations]);
@@ -51,10 +53,13 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
     if (!value) {
       if (buildingList.length > 0 && !selectedBuilding) {
         const firstB = buildingList[0];
-        setSelectedBuilding(firstB.building);
+        setSelectedBuilding(firstB.key);
         if (firstB.rooms.length > 0) {
           const firstR = firstB.rooms[0];
-          setSelectedRoom(`${firstB.building} - ${firstR.room}`);
+          const combo = `${firstB.building} - ${firstR.room}`;
+          setSelectedRoom(combo);
+          // Report the default back so the parent saves what is shown.
+          onChange(combo, firstR.officeBranch || firstB.city);
         }
       }
       return;
@@ -64,11 +69,12 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
     let matchedBuilding = '';
     let matchedRoomVal = '';
 
+    const v = value.trim().toLowerCase();
     for (const bg of buildingList) {
       for (const r of bg.rooms) {
         const fullCombo = `${bg.building} - ${r.room}`;
-        if (value === fullCombo || value === r.room || (value.includes(bg.building) && value.includes(r.room))) {
-          matchedBuilding = bg.building;
+        if (v === fullCombo.toLowerCase() || v === r.room.trim().toLowerCase()) {
+          matchedBuilding = bg.key;
           matchedRoomVal = fullCombo;
           break;
         }
@@ -81,11 +87,9 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
       setSelectedBuilding(matchedBuilding);
       setSelectedRoom(matchedRoomVal);
     } else {
+      // Value is not a registered room: show it as typed so what you see is what gets saved.
       setCustomInput(value);
-      const bMatch = buildingList.find(b => value.toLowerCase().includes(b.building.toLowerCase()));
-      if (bMatch) {
-        setSelectedBuilding(bMatch.building);
-      }
+      setIsCustomMode(true);
     }
   }, [value, locations, buildingList]);
 
@@ -103,14 +107,16 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
     }
     setIsCustomMode(false);
     setSelectedBuilding(newBuilding);
-    const rooms = buildingsMap.get(newBuilding)?.rooms || [];
+    const group = buildingsMap.get(newBuilding);
+    const rooms = group?.rooms || [];
+    const bName = group?.building || newBuilding;
     if (rooms.length > 0) {
-      const firstRoomVal = `${newBuilding} - ${rooms[0].room}`;
+      const firstRoomVal = `${bName} - ${rooms[0].room}`;
       setSelectedRoom(firstRoomVal);
       const foundLoc = rooms[0];
       onChange(firstRoomVal, foundLoc.officeBranch);
     } else {
-      const fallbackVal = `${newBuilding} - General`;
+      const fallbackVal = `${bName} - General`;
       setSelectedRoom(fallbackVal);
       onChange(fallbackVal, buildingsMap.get(newBuilding)?.city);
     }
@@ -123,7 +129,7 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
     }
     setSelectedRoom(newRoomVal);
     const group = buildingsMap.get(selectedBuilding);
-    const foundLoc = group?.rooms.find(r => `${selectedBuilding} - ${r.room}` === newRoomVal || r.room === newRoomVal);
+    const foundLoc = group?.rooms.find(r => `${group.building} - ${r.room}` === newRoomVal || r.room === newRoomVal);
     onChange(newRoomVal, foundLoc?.officeBranch || group?.city);
   };
 
@@ -197,7 +203,7 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
           >
             <option value="" disabled>-- Select Building --</option>
             {buildingList.map((bg) => (
-              <option key={bg.building} value={bg.building}>
+              <option key={bg.key} value={bg.key}>
                 🏢 {bg.building} ({bg.city || 'Station'})
               </option>
             ))}
@@ -217,16 +223,16 @@ export const BuildingRoomSelector: React.FC<BuildingRoomSelectorProps> = ({
             onChange={(e) => handleRoomChange(e.target.value)}
             className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 disabled:opacity-50 focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
           >
-            <option value="" disabled>-- Select Room in {selectedBuilding || 'Building'} --</option>
+            <option value="" disabled>-- Select Room in {buildingsMap.get(selectedBuilding)?.building || 'Building'} --</option>
             {currentBuildingRooms.map((loc) => {
-              const combo = `${selectedBuilding} - ${loc.room}`;
+              const combo = `${loc.building.trim()} - ${loc.room}`;
               return (
                 <option key={loc.locationId} value={combo}>
                   🚪 {loc.room} {loc.floor ? `(${loc.floor})` : ''}
                 </option>
               );
             })}
-            <option value="__CUSTOM__">✍️ Enter Custom Room in {selectedBuilding}...</option>
+            <option value="__CUSTOM__">✍️ Enter Custom Room in {buildingsMap.get(selectedBuilding)?.building}...</option>
           </select>
         </div>
       </div>

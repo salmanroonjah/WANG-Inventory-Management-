@@ -24,7 +24,8 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { Asset, Category, LocationRecord } from '../types/inventory.js';
-import { api } from '../services/api.js';
+import { api, assetInLocation, locationLabel } from '../services/api.js';
+import { downloadCsv } from '../utils/download.js';
 
 interface InventoryViewProps {
   assets: Asset[];
@@ -38,9 +39,10 @@ interface InventoryViewProps {
   onOpenIssueModal: (asset: Asset) => void;
   onOpenReturnModal: (asset: Asset) => void;
   onDeleteAsset?: (assetId: string) => Promise<void> | void;
-  onBatchDeleteAssets?: (assetIds: string[]) => Promise<void> | void;
+  onBatchDeleteAssets?: (assetIds: string[]) => Promise<{ message: string } | void> | void;
   onRefreshData?: () => void;
   canManage: boolean;
+  canRestoreBackup?: boolean;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -57,7 +59,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   onDeleteAsset,
   onBatchDeleteAssets,
   onRefreshData,
-  canManage
+  canManage,
+  canRestoreBackup = false
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState(initialCategoryFilter);
@@ -67,15 +70,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   // Sync if initial filters change from navigation
   useEffect(() => {
-    if (initialCategoryFilter && initialCategoryFilter !== 'all') {
-      setSelectedCat(initialCategoryFilter);
-    }
+    setSelectedCat(initialCategoryFilter || 'all');
   }, [initialCategoryFilter]);
 
   useEffect(() => {
-    if (initialLocationFilter && initialLocationFilter !== 'all') {
-      setSelectedLocation(initialLocationFilter);
-    }
+    setSelectedLocation(initialLocationFilter || 'all');
   }, [initialLocationFilter]);
 
   // Multi-Selection State for Bulk / Batch Operations
@@ -137,15 +136,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         a.categoryName?.toLowerCase() === selectedCat.toLowerCase() ||
         a.categoryId?.replace(/^CAT-/, '').toLowerCase() === selectedCat.toLowerCase();
 
-      const matchesStatus = selectedStatus === 'all' || a.status === selectedStatus;
+      const matchesStatus =
+        selectedStatus === 'all' ||
+        a.status === selectedStatus ||
+        (selectedStatus === 'MissingLost' && (a.status === 'Missing' || a.status === 'Lost'));
       const matchesCond = selectedCondition === 'all' || a.condition === selectedCondition;
-      const matchesLoc = selectedLocation === 'all' || 
-        a.officeBranch?.toLowerCase() === selectedLocation.toLowerCase() || 
-        (a.buildingRoom && a.buildingRoom.toLowerCase().includes(selectedLocation.toLowerCase()));
+      // Location filter can be a city, a building, or "Building - Room" (exact matches only).
+      const locQ = selectedLocation.trim().toLowerCase();
+      const room = (a.buildingRoom || '').trim().toLowerCase();
+      const regRoom = locations.find(l => locationLabel(l).toLowerCase() === locQ);
+      const matchesLoc = selectedLocation === 'all' ||
+        (regRoom ? assetInLocation(a, regRoom) : false) ||
+        (a.officeBranch || '').trim().toLowerCase() === locQ ||
+        room === locQ ||
+        room.startsWith(`${locQ} - `);
 
       return matchesSearch && matchesCat && matchesStatus && matchesCond && matchesLoc;
     });
-  }, [assets, search, selectedCat, selectedStatus, selectedCondition, selectedLocation]);
+  }, [assets, locations, search, selectedCat, selectedStatus, selectedCondition, selectedLocation]);
+
+  // Drop selections that are no longer visible, so bulk actions only touch what you can see.
+  useEffect(() => {
+    setSelectedAssetIds((prev) => {
+      const visible = new Set(filtered.map((a) => a.assetId));
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filtered]);
 
   // Check if all filtered are selected
   const allFilteredSelected = useMemo(() => {
@@ -224,15 +241,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     setIsBatchDeleting(true);
     setBatchDeleteError(null);
     try {
+      let res: { message: string } | void;
       if (onBatchDeleteAssets) {
-        await onBatchDeleteAssets(ids);
+        res = await onBatchDeleteAssets(ids);
       } else {
-        await api.deleteMultipleAssets(ids);
+        res = await api.deleteMultipleAssets(ids);
         if (onRefreshData) onRefreshData();
       }
       setSelectedAssetIds(new Set());
       setIsBatchDeleteModalOpen(false);
-      setSuccessToast(`Successfully deleted ${ids.length} assets.`);
+      setSuccessToast(res?.message || `Deleted ${ids.length} assets.`);
       setTimeout(() => setSuccessToast(null), 4000);
     } catch (err: any) {
       setBatchDeleteError(err?.message || 'Failed to delete selected assets.');
@@ -285,24 +303,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       `"${a.recordCompletion || ''}"`
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `WANG_Master_Assets_${exportOnlySelected ? 'Selected_' : ''}${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    downloadCsv(csvContent, `WANG_Master_Assets_${exportOnlySelected ? 'Selected_' : ''}${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const res = api.importFullBackup(text);
+        if (!window.confirm('Restore this backup? Records in the file will overwrite records with the same IDs. Nothing will be deleted.')) return;
+        const res = await api.importFullBackup(text);
         if (res.success) {
           setBackupMessage(res.message);
           if (onRefreshData) onRefreshData();
@@ -311,7 +324,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           alert('Error restoring backup: ' + res.message);
         }
       } catch (err: any) {
-        alert('Failed to parse backup JSON: ' + err.message);
+        alert('Failed to restore backup: ' + err.message);
       }
     };
     reader.readAsText(file);
@@ -384,7 +397,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               accept=".json"
               className="hidden"
             />
-            {canManage && (
+            {canRestoreBackup && (
               <button
                 onClick={() => fileInputRef.current?.click()}
                 title="Restore inventory from JSON backup"
@@ -477,9 +490,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </button>
 
           <button
-            onClick={() => setSelectedStatus('Missing')}
+            onClick={() => setSelectedStatus('MissingLost')}
             className={`p-3 rounded-xl border text-left transition-all col-span-2 sm:col-span-1 cursor-pointer ${
-              selectedStatus === 'Missing'
+              selectedStatus === 'MissingLost'
                 ? 'bg-rose-700 text-white border-rose-700 shadow-xs'
                 : 'bg-rose-50 text-rose-900 border-rose-200 hover:bg-rose-100/70'
             }`}
@@ -542,6 +555,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <option value="New">New</option>
               <option value="Good">Good</option>
               <option value="Fair">Fair</option>
+              <option value="Minor Wear">Minor Wear</option>
               <option value="Needs Repair">Needs Repair</option>
               <option value="Damaged">Damaged</option>
             </select>
@@ -786,6 +800,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                             <Eye className="w-4 h-4" />
                           </button>
 
+                          {canManage && asset.status === 'Available' && (
+                            <button
+                              onClick={() => onOpenIssueModal(asset)}
+                              title="Issue to an employee"
+                              className="px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 rounded-lg cursor-pointer"
+                            >
+                              Issue
+                            </button>
+                          )}
+                          {canManage && asset.status === 'Issued' && (
+                            <button
+                              onClick={() => onOpenReturnModal(asset)}
+                              title="Process return"
+                              className="px-2 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-50 rounded-lg cursor-pointer"
+                            >
+                              Return
+                            </button>
+                          )}
+
                           {canManage && (
                             <button
                               onClick={() => onOpenEditModal(asset)}
@@ -860,7 +893,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold">Notice: </span>
-                  This asset is currently in custody of <strong>{assetToDelete.assignedTo}</strong>. Deleting it will purge the assignment record.
+                  This asset is issued to <strong>{assetToDelete.assignedTo}</strong>. Process its return first, then delete it.
                 </div>
               </div>
             )}
@@ -884,8 +917,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmSingleDelete}
-                disabled={isDeleting}
-                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                disabled={isDeleting || assetToDelete.status === 'Issued'}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 {isDeleting ? (
                   <>
@@ -938,7 +971,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold">Notice ({selectedIssuedCount} Issued): </span>
-                  {selectedIssuedCount} of the selected assets are currently Issued to employees. Deleting them will remove active custody records.
+                  {selectedIssuedCount} of the selected assets are issued to employees and will be skipped. Return them first to delete them.
                 </div>
               </div>
             )}

@@ -120,13 +120,13 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 </button>
               )}
 
-              {asset.status !== 'Missing' && asset.status !== 'Lost' && onOpenReportMissing && (
+              {['Available', 'Issued', 'Under Maintenance', 'Missing'].includes(asset.status) && onOpenReportMissing && (
                 <button
                   onClick={() => { onClose(); onOpenReportMissing(asset); }}
                   className="px-3 py-1.5 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors"
                 >
                   <AlertTriangle className="w-3.5 h-3.5" />
-                  Report Missing/Lost
+                  {asset.status === 'Missing' ? 'Mark as Lost' : 'Report Missing/Lost'}
                 </button>
               )}
             </div>
@@ -157,7 +157,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
               <div className="flex items-start gap-2">
                 <User className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                 <div>
-                  <span className="text-slate-500 block">Current Assignment:</span>
+                  <span className="text-slate-500 block">{asset.status === 'Issued' || !asset.assignedTo ? 'Current Assignment:' : 'Last Custodian:'}</span>
                   {asset.assignedTo ? (
                     <span className="font-semibold text-slate-900">
                       {asset.assignedTo} ({asset.assignedEmployeeId})
@@ -165,7 +165,7 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   ) : (
                     <span className="text-slate-500 italic">Unassigned (In Store)</span>
                   )}
-                  {asset.dueDate && (
+                  {asset.status === 'Issued' && asset.dueDate && (
                     <span className="block text-[11px] text-amber-700 font-medium">
                       Return Due: {asset.dueDate}
                     </span>

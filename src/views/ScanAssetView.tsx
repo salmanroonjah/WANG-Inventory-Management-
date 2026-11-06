@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Camera, 
   Search, 
@@ -17,9 +17,10 @@ import {
 } from 'lucide-react';
 import { Asset, AssetTransaction, Employee } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
-import { api } from '../services/api.js';
-
 interface ScanAssetViewProps {
+  assets: Asset[];
+  transactions: AssetTransaction[];
+  initialAssetId?: string | null;
   onOpenScannerModal: () => void;
   onOpenIssueModal: (asset: Asset) => void;
   onOpenReturnModal: (asset: Asset) => void;
@@ -32,6 +33,9 @@ interface ScanAssetViewProps {
 }
 
 export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
+  assets,
+  transactions: allTransactions,
+  initialAssetId,
   onOpenScannerModal,
   onOpenIssueModal,
   onOpenReturnModal,
@@ -43,41 +47,33 @@ export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
   canManage
 }) => {
   const [searchInput, setSearchInput] = useState('');
-  const [searchedAsset, setSearchedAsset] = useState<Asset | null>(null);
-  const [transactions, setTransactions] = useState<AssetTransaction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [lastSearchedQuery, setLastSearchedQuery] = useState('');
 
-  const sampleBarcodes = [
-    { id: 'WANG-ELE-001', name: 'Dell Latitude 5420 Laptop', status: 'Issued (Dr. Salman)' },
-    { id: 'WANG-ELE-002', name: 'Logitech MX Master 3S Mouse', status: 'Available' },
-    { id: 'WANG-ELE-003', name: 'APC Smart-UPS 1500VA', status: 'Available' },
-    { id: 'WANG-IT-001', name: 'HP LaserJet Pro MFP 4103fdw', status: 'Issued (Fatima)' },
-    { id: 'WANG-IT-002', name: 'Dell UltraSharp 27" Monitor', status: 'Issued (Ayesha)' },
-    { id: 'WANG-FUR-001', name: 'Executive Mesh Chair', status: 'Available' },
-    { id: 'WANG-COM-001', name: 'Canon EOS R50 Camera Kit', status: 'Available' }
-  ];
+  // Derived from live data, so status/actions update right after issue/return.
+  const searchedAsset = lastSearchedQuery
+    ? assets.find((a) => a.assetId.toUpperCase() === lastSearchedQuery) || null
+    : null;
+  const transactions = searchedAsset ? allTransactions.filter((t) => t.assetId === searchedAsset.assetId) : [];
 
-  const handleSearch = async (assetIdToSearch: string) => {
+  // Quick-pick list of recently updated real assets.
+  const sampleBarcodes = [...assets]
+    .sort((a, b) => (b.lastUpdated || '').localeCompare(a.lastUpdated || ''))
+    .slice(0, 7)
+    .map((a) => ({ id: a.assetId, name: a.itemName, status: a.status === 'Issued' ? `Issued (${a.assignedTo})` : a.status }));
+
+  const handleSearch = (assetIdToSearch: string) => {
     const clean = assetIdToSearch.trim().toUpperCase();
     if (!clean) return;
-
-    setIsLoading(true);
+    setSearchInput(clean);
     setSearchAttempted(true);
     setLastSearchedQuery(clean);
-
-    try {
-      const res = await api.getAssetById(clean);
-      setSearchedAsset(res.asset);
-      setTransactions(res.transactions);
-    } catch (err) {
-      setSearchedAsset(null);
-      setTransactions([]);
-    } finally {
-      setIsLoading(false);
-    }
   };
+
+  useEffect(() => {
+    if (initialAssetId) handleSearch(initialAssetId);
+  }, [initialAssetId]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -143,7 +139,7 @@ export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
 
         {/* Quick Simulator Buttons */}
         <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-[11px] font-medium text-slate-400 mr-1">Quick Test Labels:</span>
+          <span className="text-[11px] font-medium text-slate-400 mr-1">Recently Updated:</span>
           {sampleBarcodes.map((item) => (
             <button
               key={item.id}
@@ -228,13 +224,13 @@ export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
                   </button>
                 )}
 
-                {searchedAsset.status !== 'Missing' && searchedAsset.status !== 'Lost' && (
+                {['Available', 'Issued', 'Under Maintenance', 'Missing'].includes(searchedAsset.status) && (
                   <button
                     onClick={() => onOpenReportMissingModal(searchedAsset)}
                     className="px-3.5 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors"
                   >
                     <AlertTriangle className="w-3.5 h-3.5" />
-                    Report Missing/Lost
+                    {searchedAsset.status === 'Missing' ? 'Mark as Lost' : 'Report Missing/Lost'}
                   </button>
                 )}
 
@@ -367,13 +363,15 @@ export const ScanAssetView: React.FC<ScanAssetViewProps> = ({
                             <div className="text-slate-500 text-[10px]">Employee: {tx.employeeName}</div>
                           )}
                         </div>
-                        <button
-                          onClick={() => onPrintVoucher(searchedAsset, tx)}
-                          title="Print Handover Slip"
-                          className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                        </button>
+                        {(tx.transactionType === 'ISSUE' || tx.transactionType === 'RETURN') && (
+                          <button
+                            onClick={() => onPrintVoucher(searchedAsset, tx)}
+                            title="Print Handover Slip"
+                            className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

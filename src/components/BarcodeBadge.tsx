@@ -42,7 +42,7 @@ export const BarcodeBadge: React.FC<BarcodeBadgeProps> = ({
         console.error('Failed to generate barcode for', value, err);
       }
     }
-  }, [value, width, height, fontSize, displayValue]);
+  }, [barcodeValue, width, height, fontSize, displayValue]);
 
   return (
     <div className={`inline-flex flex-col items-center bg-white p-2 rounded border border-slate-200 shadow-xs ${className}`}>

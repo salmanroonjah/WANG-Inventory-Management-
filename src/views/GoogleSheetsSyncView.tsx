@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { GoogleSheetsSyncConfig } from '../types/inventory.js';
 import { api } from '../services/api.js';
+import { downloadCsv, toCsv } from '../utils/download.js';
 
 interface GoogleSheetsSyncViewProps {
   onRefresh: () => void;
@@ -42,9 +43,10 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
     try {
       const c = await api.getSheetsConfig();
       setConfig(c);
-      setSpreadsheetIdInput(c.spreadsheetId);
+      setSpreadsheetIdInput(c.spreadsheetId || '');
     } catch (err) {
       console.error('Failed to load sheets config', err);
+      setTestResult({ success: false, message: 'Could not load the saved spreadsheet settings.' });
     }
   };
 
@@ -71,23 +73,17 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
     try {
       const wb = await api.getWorkbookExport();
       setWorkbookPreview(wb);
+      if (!wb[selectedPreviewSheet]) setSelectedPreviewSheet(Object.keys(wb)[0]);
       setActiveTab('preview');
     } catch (err) {
       console.error('Failed to load workbook preview', err);
+      setTestResult({ success: false, message: (err as any)?.message || 'Could not build the workbook export.' });
     }
   };
 
   const handleDownloadSheetCSV = (sheetName: string) => {
     if (!workbookPreview || !workbookPreview[sheetName]) return;
-    const rows = workbookPreview[sheetName];
-    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `WANG_${sheetName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(toCsv(workbookPreview[sheetName]), `WANG_${sheetName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   return (
@@ -112,7 +108,7 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
             className="px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-            View Synchronized Workbook
+            View / Export Workbook
           </button>
         </div>
       </div>
@@ -175,7 +171,7 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
                   className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
-                  {isTesting ? 'Verifying...' : 'Test & Sync Connection'}
+                  {isTesting ? 'Saving...' : 'Save Spreadsheet ID'}
                 </button>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
@@ -198,7 +194,7 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
                   <p className="font-semibold">{testResult.message}</p>
                   {testResult.rowCount !== undefined && (
                     <p className="mt-0.5 text-emerald-800">
-                      Successfully verified <strong>{testResult.rowCount}</strong> physical assets in Master Assets tab.
+                      {testResult.rowCount} rows.
                     </p>
                   )}
                 </div>
@@ -206,96 +202,36 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
             )}
           </div>
 
-          {/* 5 Tabs Verification Status */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">
-                  Required Workbook Tabs Health Check
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Exact schema matching original WANG Excel template
-                </p>
-              </div>
-              <span className="text-xs px-2.5 py-1 bg-emerald-100 text-emerald-800 font-semibold rounded-full">
-                5 / 5 Tabs Verified
+          {/* Honest connection status */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm">Current Status</h3>
+              <span
+                className={`px-2.5 py-1 rounded-full font-semibold ${
+                  config?.isConfigured ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                {config?.isConfigured ? 'Spreadsheet ID saved' : 'Not configured'}
               </span>
             </div>
-
-            <div className="divide-y divide-slate-100 text-xs">
-              <div className="p-4 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-900 font-mono">1. START HERE</span>
-                  <p className="text-slate-500 text-[11px]">System guidelines, organization metadata, and operational notice.</p>
-                </div>
-                <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                  Connected
-                </span>
-              </div>
-
-              <div className="p-4 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-900 font-mono">2. Master Assets</span>
-                  <p className="text-slate-500 text-[11px]">24 columns (Asset ID, Serial, Category, Location, Custody, Cost, Warranty, Completion).</p>
-                </div>
-                <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                  Connected (24/24 cols)
-                </span>
-              </div>
-
-              <div className="p-4 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-900 font-mono">3. Categories</span>
-                  <p className="text-slate-500 text-[11px]">CAT-ELE, CAT-IT, CAT-FUR, CAT-COM and descriptions.</p>
-                </div>
-                <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                  Connected
-                </span>
-              </div>
-
-              <div className="p-4 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-900 font-mono">4. Employees & Locations</span>
-                  <p className="text-slate-500 text-[11px]">Registered staff roster, departments, and office rooms.</p>
-                </div>
-                <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                  Connected
-                </span>
-              </div>
-
-              <div className="p-4 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-slate-900 font-mono">5. Asset Transactions</span>
-                  <p className="text-slate-500 text-[11px]">Synchronized issue, return, transfer, and missing item audit log.</p>
-                </div>
-                <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                  Connected (Audit Log)
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Conflict Resolution & Integrity Safeguards */}
-          <div className="bg-slate-50 rounded-xl border border-slate-200 p-5 space-y-3 text-xs">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-slate-800" />
-              <h4 className="font-bold text-slate-900 text-sm">
-                Conflict Resolution & Data Integrity Policy
-              </h4>
-            </div>
+            {config?.isConfigured && config.spreadsheetId && (
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[#003279] font-semibold hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> Open the linked Google Sheet
+              </a>
+            )}
             <p className="text-slate-600 leading-relaxed">
-              1. <strong>Operational Source of Truth:</strong> The internal database manages all live barcode scans, issue/return transactions, and role permissions with atomic transaction safeguards.
-            </p>
-            <p className="text-slate-600 leading-relaxed">
-              2. <strong>Zero ID Overwrites:</strong> Scanned barcodes are validated strictly against existing Asset IDs (e.g. <code className="font-mono bg-white px-1 py-0.5 rounded border border-slate-200">WANG-ELE-001</code>). IDs are never regenerated or duplicated.
-            </p>
-            <p className="text-slate-600 leading-relaxed">
-              3. <strong>Safe Synchronization:</strong> Newer, verified fields in the database take precedence over older rows. Spreadsheet rows with matching Asset IDs are safely updated without wiping uncataloged attributes.
+              <strong>Live two-way sync is not enabled yet.</strong> The inventory database in this app is the source of truth.
+              To update the Google Sheet, click <strong>View / Export Workbook</strong>, download each tab as CSV, and in Google
+              Sheets use <em>File → Import → Upload → Replace current sheet</em>.
             </p>
           </div>
         </div>
       )}
-
       {/* TAB 2: SETUP & INSTRUCTIONS */}
       {activeTab === 'setup' && (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-6 text-xs text-slate-700">
@@ -326,22 +262,22 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
 
             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
               <span className="font-bold text-slate-900 block text-sm mb-1">
-                Step 2: Share Workbook Access
+                Step 2: Save the ID
               </span>
               <p>
-                In Google Sheets, click the green <strong>Share</strong> button at the top right.
+                Paste the ID (or the full sheet URL) above and click <strong>Save Spreadsheet ID</strong>. A link to the sheet appears on the status card.
               </p>
               <p className="mt-1">
-                Share with the service account email or authorized account with <strong>Editor</strong> permission so that transaction logs and asset updates can be synchronized safely.
+                Anyone using this link still needs their own access to the sheet in Google.
               </p>
             </div>
 
             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
               <span className="font-bold text-slate-900 block text-sm mb-1">
-                Step 3: Test and Export
+                Step 3: Export and Import
               </span>
               <p>
-                Click <strong>Test & Sync Connection</strong>. Once connected, use <strong>View Synchronized Workbook</strong> to export formatted CSV or Google Sheets tables for any tab at any time.
+                Use <strong>View / Export Workbook</strong> to download any tab as CSV from the live database, then import it into the matching tab in Google Sheets.
               </p>
             </div>
           </div>

@@ -34,11 +34,14 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
     if (asset) {
       setCondition(asset.condition || 'Good');
       setLocation(asset.buildingRoom || '');
-      setSelectedEmpId(employees.length > 0 ? employees[0].employeeId : '');
+      setSelectedEmpId('');
+      setDueDate('');
+      setNotes('');
       setError(null);
       setShowConfirm(false);
     }
-  }, [asset, employees]);
+    // Reset only when a different asset is opened, not on every live data update.
+  }, [asset?.assetId, isOpen]);
 
   if (!isOpen || !asset) return null;
 
@@ -175,7 +178,7 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900 focus:outline-hidden"
               >
                 <option value="">-- Select Registered Employee --</option>
-                {employees.map((emp) => (
+                {employees.filter((emp) => emp.activeStatus).map((emp) => (
                   <option key={emp.employeeId} value={emp.employeeId}>
                     {emp.fullName} ({emp.employeeId}) — {emp.designation}, {emp.department}
                   </option>
@@ -206,6 +209,8 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
                   <option value="Good">Good</option>
                   <option value="Fair">Fair</option>
                   <option value="Minor Wear">Minor Wear</option>
+                  <option value="Needs Repair">Needs Repair</option>
+                  <option value="Damaged">Damaged</option>
                 </select>
               </div>
 
@@ -216,6 +221,7 @@ export const IssueAssetModal: React.FC<IssueAssetModalProps> = ({
                 </label>
                 <input
                   type="date"
+                  min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]}
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-slate-900"

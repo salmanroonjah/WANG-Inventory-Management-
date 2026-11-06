@@ -27,18 +27,19 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [torchOn, setTorchOn] = useState(false);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannedRef = useRef(false); // one scan per opening, even if the camera decodes several frames
+  const openRef = useRef(isOpen);
   const readerElementId = 'wang-html5-qrcode-reader';
 
-  // Sample quick test barcodes
-  const sampleBarcodes = [
-    'WANG-ELE-001',
-    'WANG-ELE-002',
-    'WANG-ELE-003',
-    'WANG-IT-001',
-    'WANG-IT-002',
-    'WANG-FUR-001',
-    'WANG-COM-001'
-  ];
+  useEffect(() => {
+    openRef.current = isOpen;
+    if (isOpen) {
+      scannedRef.current = false;
+      setLastScannedResult(null);
+      setManualInput('');
+      setCameraError(null);
+    }
+  }, [isOpen]);
 
   // Stop scanner safely
   const stopScanner = async () => {
@@ -57,6 +58,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   };
 
   const handleSuccessfulScan = (decodedText: string) => {
+    if (scannedRef.current) return;
+    scannedRef.current = true;
     // Clean and normalize ID
     let cleaned = decodedText.trim();
     // In case the barcode is an encoded URL e.g. https://wang.org/asset/WANG-ELE-001
@@ -127,6 +130,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         }
       );
 
+      // The modal may have been closed while the camera was starting.
+      if (!openRef.current || scannerRef.current !== html5QrCode) {
+        try {
+          await html5QrCode.stop();
+          await html5QrCode.clear();
+        } catch {}
+        return;
+      }
       setIsScanning(true);
     } catch (err: any) {
       console.error('Camera startup error:', err);
@@ -172,12 +183,18 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     if (!file) return;
 
     setCameraError(null);
+    const html5QrCode = new Html5Qrcode('wang-file-scan-dummy');
     try {
-      const html5QrCode = new Html5Qrcode('wang-file-scan-dummy');
       const result = await html5QrCode.scanFile(file, true);
       handleSuccessfulScan(result);
     } catch (err: any) {
       setCameraError('No readable barcode found in this image. Please ensure good lighting and clear barcode focus.');
+    } finally {
+      try {
+        html5QrCode.clear();
+      } catch {}
+      // Allow choosing the same file again.
+      e.target.value = '';
     }
   };
 
@@ -391,24 +408,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             </form>
           )}
 
-          {/* Quick Demo Test Buttons */}
-          <div className="mt-5 pt-4 border-t border-slate-200">
-            <span className="text-[11px] font-medium text-slate-500 block mb-2">
-              Quick test barcodes (click to simulate instant scan):
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {sampleBarcodes.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => handleSuccessfulScan(id)}
-                  className="px-2.5 py-1 text-[11px] font-mono font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 rounded border border-slate-300 transition-colors"
-                >
-                  {id}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
 
         {/* Footer */}

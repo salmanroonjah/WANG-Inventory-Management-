@@ -28,7 +28,7 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
+    <div className="print-receipt fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
       <div className="relative w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Controls Header (Hidden in Print) */}
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 bg-slate-50 print:hidden">
@@ -78,7 +78,7 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
                   WANG INVENTORY SYSTEM
                 </h1>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  Head Office: Islamabad, Pakistan · Field Hub: Quetta, Balochistan
+                  Asset Custody Record
                 </p>
               </div>
             </div>
@@ -110,7 +110,7 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
                 </span>
               </div>
               <div>
-                <span className="text-slate-500">Issuing Authority: </span>
+                <span className="text-slate-500">{isIssue ? 'Issued By' : 'Received By'}: </span>
                 <span className="font-semibold text-slate-900">{transaction.performedByName}</span>
               </div>
               {transaction.dueDate && (
@@ -145,12 +145,12 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
                 <span className="font-mono font-medium text-slate-900">{asset.serialNumber || 'N/A'}</span>
               </div>
               <div>
-                <span className="text-slate-500 block">Handover Condition:</span>
+                <span className="text-slate-500 block">{isIssue ? 'Condition at Handover' : 'Condition on Return'}:</span>
                 <span className="font-semibold text-slate-900">{transaction.condition}</span>
               </div>
               <div>
-                <span className="text-slate-500 block">Assigned Location:</span>
-                <span className="font-medium text-slate-900">{asset.officeBranch} ({asset.buildingRoom})</span>
+                <span className="text-slate-500 block">{isIssue ? 'Deployed Location' : 'Returned To'}:</span>
+                <span className="font-medium text-slate-900">{transaction.location || asset.buildingRoom || '—'}</span>
               </div>
             </div>
           </div>
@@ -162,20 +162,24 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
             </h4>
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div>
-                <span className="text-slate-500 block">Responsible Employee:</span>
+                <span className="text-slate-500 block">{isIssue ? 'Receiving Employee' : 'Returning Employee'}:</span>
                 <span className="font-bold text-slate-900 text-sm">{transaction.employeeName}</span>
                 <span className="text-slate-600 block font-mono">ID: {transaction.employeeId}</span>
               </div>
               <div>
                 <span className="text-slate-500 block">Notes & Custody Terms:</span>
-                <p className="text-slate-700 italic mt-0.5">{transaction.notes || 'Asset issued in sound working order for official duties.'}</p>
+                <p className="text-slate-700 italic mt-0.5">{transaction.notes || (isIssue ? 'Asset issued in sound working order for official duties.' : 'Asset returned to store.')}</p>
               </div>
             </div>
           </div>
 
           {/* Custody Undertaking Statement */}
           <div className="mb-8 p-3 rounded bg-slate-100 border border-slate-200 text-[11px] text-slate-700 leading-relaxed">
-            <strong>Custody Undertaking:</strong> The employee receiving this equipment agrees to safeguard it, utilize it strictly in accordance with WANG organizational policies, and return it upon request or upon separation from the organization. Any loss, damage, or malfunction must be reported to the IT & Logistics department immediately.
+            {isIssue ? (
+              <><strong>Custody Undertaking:</strong> The employee receiving this equipment agrees to safeguard it, utilize it strictly in accordance with WANG organizational policies, and return it upon request or upon separation from the organization. Any loss, damage, or malfunction must be reported immediately.</>
+            ) : (
+              <><strong>Custody Discharge:</strong> The above asset has been returned and inspected in the condition stated. The employee is released from custody responsibility for this item from the date of this voucher.</>
+            )}
           </div>
 
           {/* Signatures */}
@@ -191,7 +195,7 @@ export const HandoverReceiptModal: React.FC<HandoverReceiptModalProps> = ({
               <div className="h-12 border-b border-dashed border-slate-400" />
               <div className="mt-2 text-xs">
                 <span className="font-semibold block text-slate-900">{transaction.employeeName}</span>
-                <span className="text-slate-500 text-[11px]">Receiving Employee Signature</span>
+                <span className="text-slate-500 text-[11px]">{isIssue ? 'Receiving Employee Signature' : 'Returning Employee Signature'}</span>
               </div>
             </div>
           </div>

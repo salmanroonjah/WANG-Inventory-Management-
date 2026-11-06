@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   AlertTriangle, 
   Clock, 
@@ -20,46 +20,74 @@ interface MissingLostViewProps {
   onOpenReportMissingModal: (asset: Asset) => void;
   onOpenResolveStatusModal: (asset: Asset) => void;
   onOpenReturnModal: (asset: Asset) => void;
+  onOpenScanner?: (callback: (assetId: string) => void) => void;
+  initialTab?: 'missing' | 'overdue';
   canManage: boolean;
 }
+
+/** Today's date as YYYY-MM-DD in local time. */
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 export const MissingLostView: React.FC<MissingLostViewProps> = ({
   assets,
   onOpenReportMissingModal,
   onOpenResolveStatusModal,
   onOpenReturnModal,
+  onOpenScanner,
+  initialTab,
   canManage
 }) => {
-  const [activeTab, setActiveTab] = useState<'missing-lost' | 'overdue'>('missing-lost');
+  const [activeTab, setActiveTab] = useState<'missing-lost' | 'overdue'>(initialTab === 'overdue' ? 'overdue' : 'missing-lost');
   const [search, setSearch] = useState('');
+  const [isPicking, setIsPicking] = useState(false);
+  const [pickId, setPickId] = useState('');
+  const [pickError, setPickError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab === 'overdue' ? 'overdue' : 'missing-lost');
+  }, [initialTab]);
+
+  const handlePick = (rawId: string) => {
+    const id = rawId.trim().toUpperCase();
+    const found = assets.find((a) => a.assetId.toUpperCase() === id);
+    if (!found) {
+      setPickError(`${id || 'That ID'} is not a registered asset.`);
+      return;
+    }
+    if (!['Available', 'Issued', 'Under Maintenance', 'Missing'].includes(found.status)) {
+      setPickError(`${found.assetId} is already "${found.status}".`);
+      return;
+    }
+    setPickError(null);
+    setPickId('');
+    setIsPicking(false);
+    onOpenReportMissingModal(found);
+  };
 
   // Missing or Lost Assets
   const missingOrLostAssets = assets.filter(a => a.status === 'Missing' || a.status === 'Lost');
 
-  // Overdue Assets (status is 'Issued' and dueDate is in past)
-  const now = new Date();
-  const overdueAssets = assets.filter(a => {
-    if (a.status !== 'Issued' || !a.dueDate) return false;
-    return new Date(a.dueDate) < now;
-  });
+  // Overdue = issued and the due date is before today (an item due today is not overdue yet).
+  const today = localToday();
+  const overdueAssets = assets.filter(a => a.status === 'Issued' && !!a.dueDate && a.dueDate < today);
 
-  const filteredMissing = missingOrLostAssets.filter(a => 
-    a.assetId.toLowerCase().includes(search.toLowerCase()) ||
-    a.itemName.toLowerCase().includes(search.toLowerCase()) ||
-    a.brand.toLowerCase().includes(search.toLowerCase()) ||
-    a.remarks.toLowerCase().includes(search.toLowerCase())
+  const q = search.toLowerCase();
+  const has = (v?: string) => (v || '').toLowerCase().includes(q);
+  const filteredMissing = missingOrLostAssets.filter(a =>
+    has(a.assetId) || has(a.itemName) || has(a.brand) || has(a.remarks) || has(a.assignedTo)
   );
 
-  const filteredOverdue = overdueAssets.filter(a =>
-    a.assetId.toLowerCase().includes(search.toLowerCase()) ||
-    a.itemName.toLowerCase().includes(search.toLowerCase()) ||
-    a.assignedTo.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredOverdue = overdueAssets.filter(a => has(a.assetId) || has(a.itemName) || has(a.assignedTo));
 
   const getDaysOverdue = (dueDateStr: string) => {
-    const due = new Date(dueDateStr);
-    const diffTime = Math.abs(now.getTime() - due.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const [y, m, d] = dueDateStr.split('-').map(Number);
+    const due = new Date(y, (m || 1) - 1, d || 1);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((start.getTime() - due.getTime()) / 86400000));
   };
 
   return (
@@ -81,9 +109,8 @@ export const MissingLostView: React.FC<MissingLostViewProps> = ({
         {canManage && (
           <button
             onClick={() => {
-              // Find an active asset to report or pick from list
-              const candidate = assets.find(a => a.status !== 'Missing' && a.status !== 'Lost');
-              if (candidate) onOpenReportMissingModal(candidate);
+              setIsPicking((v) => !v);
+              setPickError(null);
             }}
             className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors shadow-xs"
           >
@@ -92,6 +119,47 @@ export const MissingLostView: React.FC<MissingLostViewProps> = ({
           </button>
         )}
       </div>
+
+      {isPicking && canManage && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handlePick(pickId);
+          }}
+          className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex flex-col sm:flex-row gap-2 text-xs"
+        >
+          <input
+            autoFocus
+            list="report-missing-assets"
+            value={pickId}
+            onChange={(e) => setPickId(e.target.value.toUpperCase())}
+            placeholder="Type or pick the Asset ID that is missing…"
+            className="flex-1 px-3 py-2 bg-white border border-rose-300 rounded-lg font-mono uppercase"
+          />
+          <datalist id="report-missing-assets">
+            {assets
+              .filter((a) => ['Available', 'Issued', 'Under Maintenance'].includes(a.status))
+              .map((a) => (
+                <option key={a.assetId} value={a.assetId}>
+                  {a.itemName}
+                </option>
+              ))}
+          </datalist>
+          {onOpenScanner && (
+            <button
+              type="button"
+              onClick={() => onOpenScanner((id) => handlePick(id))}
+              className="px-3 py-2 bg-white border border-rose-300 text-rose-800 font-semibold rounded-lg"
+            >
+              Scan Barcode
+            </button>
+          )}
+          <button type="submit" className="px-4 py-2 bg-rose-700 text-white font-semibold rounded-lg">
+            Continue
+          </button>
+          {pickError && <span className="text-rose-800 font-medium self-center">{pickError}</span>}
+        </form>
+      )}
 
       {/* Segmented Tab Switcher */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

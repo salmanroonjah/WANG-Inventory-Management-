@@ -45,5 +45,27 @@
     padding: 0 !important;
     margin: 0 !important;
   }
+
+  /* When a receipt is open, print only the receipt, full length. */
+  body:has(.print-receipt) main {
+    display: none !important;
+  }
+  body:has(.print-receipt) .h-screen {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .print-receipt {
+    position: static !important;
+    background: white !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+  }
+  .print-receipt > div,
+  .print-receipt .overflow-y-auto {
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
 }
 

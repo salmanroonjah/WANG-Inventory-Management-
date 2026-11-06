@@ -23,8 +23,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
 }) => {
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email);
-  const [phone, setPhone] = useState(employeeRecord?.phone || '+92 300 8765432');
-  const [designation, setDesignation] = useState(employeeRecord?.designation || 'Executive Director');
+  const [phone, setPhone] = useState(employeeRecord?.phone || '');
+  const [designation, setDesignation] = useState(employeeRecord?.designation || '');
   const [officeBranch, setOfficeBranch] = useState(currentUser.officeBranch || employeeRecord?.officeBranch || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
     if (currentUser) {
       setName(currentUser.name);
       setEmail(currentUser.email);
-      setOfficeBranch(currentUser.officeBranch || employeeRecord?.officeBranch || 'Head Office - Islamabad');
+      setOfficeBranch(employeeRecord?.officeBranch || currentUser.officeBranch || '');
     }
     if (employeeRecord) {
       if (employeeRecord.phone) setPhone(employeeRecord.phone);
@@ -44,7 +44,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
     }
     setError(null);
     setSuccessMsg(null);
-  }, [currentUser, employeeRecord, isOpen]);
+    // Reset only when opened, so live updates don't wipe what is being typed.
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -52,10 +53,6 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
     e.preventDefault();
     if (!name.trim()) {
       setError('Full name is required.');
-      return;
-    }
-    if (!email.trim()) {
-      setError('Email address is required.');
       return;
     }
 
@@ -71,25 +68,15 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
         officeBranch
       });
 
-      // Also ensure employee record EMP-001 is updated directly
-      if (employeeRecord?.employeeId) {
-        await api.updateEmployee(employeeRecord.employeeId, {
-          fullName: name.trim(),
-          email: email.trim(),
-          phone: phone.trim(),
-          designation: designation.trim(),
-          officeBranch
-        });
-      }
-
       setSuccessMsg('Profile successfully updated!');
+      // Keep the button disabled until the modal closes (no double submit).
       setTimeout(() => {
         onSuccess(updatedUser);
         onClose();
+        setIsSubmitting(false);
       }, 500);
     } catch (err: any) {
       setError(err?.message || 'Failed to update profile.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -104,10 +91,10 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               <User className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">Executive Director Profile Settings</h3>
+              <h3 className="font-bold text-white text-base">My Profile Settings</h3>
               <p className="text-xs text-[#f1cc11] font-mono flex items-center gap-1.5 font-bold">
                 <Shield className="w-3.5 h-3.5 fill-current" />
-                Super Admin · {employeeRecord?.employeeId || currentUser.employeeId || 'EMP-001'}
+                {currentUser.role} · {employeeRecord?.employeeId || currentUser.employeeId || 'No staff record'}
               </p>
             </div>
           </div>
@@ -157,7 +144,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Dr. Salman Khan"
+              placeholder="Full name"
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
             />
           </div>

@@ -17,7 +17,7 @@ import {
 import { Asset, AssetCondition, AssetTransaction, LocationRecord } from '../types/inventory.js';
 import { BarcodeBadge } from '../components/BarcodeBadge.js';
 import { BuildingRoomSelector } from '../components/BuildingRoomSelector.js';
-import { api } from '../services/api.js';
+import { api, defaultStoreLocation } from '../services/api.js';
 
 interface ReturnAssetViewProps {
   onOpenScanner: () => void;
@@ -52,7 +52,7 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
 
   // Form State
   const [returnCondition, setReturnCondition] = useState<AssetCondition>('Good');
-  const [targetLocation, setTargetLocation] = useState('Central Store - Bay A');
+  const [targetLocation, setTargetLocation] = useState(() => defaultStoreLocation(locations));
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -76,7 +76,7 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
       const res = await api.getAssetById(clean);
       setAsset(res.asset);
       setReturnCondition(res.asset.condition || 'Good');
-      setTargetLocation('Central Store - Bay A');
+      setTargetLocation(defaultStoreLocation(locations, res.asset.buildingRoom));
     } catch (err: any) {
       setAsset(null);
       setSearchError(err?.message || `No asset found with ID ${clean}`);
@@ -89,7 +89,7 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
     setAsset(selected);
     setAssetIdInput(selected.assetId);
     setReturnCondition(selected.condition || 'Good');
-    setTargetLocation('Central Store - Bay A');
+    setTargetLocation(defaultStoreLocation(locations, selected.buildingRoom));
     setSearchError(null);
     setActionError(null);
     setCompletedTx(null);
@@ -278,11 +278,12 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
               </div>
 
               {/* Status check warning */}
-              {asset.status !== 'Issued' && (
+              {!completedTx && asset.status !== 'Issued' && (
                 <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>
-                    Notice: This asset is currently in <strong>{asset.status}</strong> status. Only "Issued" assets have an active employee handover to discharge.
+                    This asset is <strong>{asset.status}</strong>, not issued to anyone, so there is nothing to return.
+                    {(asset.status === 'Missing' || asset.status === 'Lost') && ' If it has been found, use Resolve / Recover on the Missing & Overdue screen.'}
                   </span>
                 </div>
               )}
@@ -294,7 +295,9 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                       <div>
-                        <h4 className="text-sm font-bold">Asset Successfully Returned & Discharged!</h4>
+                        <h4 className="text-sm font-bold">
+                          Returned by {completedTx.transaction.employeeName || 'staff'} — now {completedTx.asset.status}
+                        </h4>
                         <p className="text-xs text-emerald-800">
                           Transaction ID: <span className="font-mono">{completedTx.transaction.transactionId}</span>
                         </p>
@@ -308,10 +311,23 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
                       <span>Print Return Voucher</span>
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletedTx(null);
+                      setAsset(null);
+                      setAssetIdInput('');
+                      setNotes('');
+                    }}
+                    className="text-xs font-bold text-emerald-900 underline"
+                  >
+                    Return another asset
+                  </button>
                 </div>
               )}
 
-              {/* Return Form */}
+              {/* Return Form (only for an Issued asset, hidden once returned) */}
+              {!completedTx && asset.status === 'Issued' && (
               <form onSubmit={handleReturnSubmit} className="p-5 space-y-4">
                 {actionError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
@@ -333,6 +349,7 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
                     <option value="Good">Good — Ready for immediate reissue</option>
                     <option value="New">New / Like-New</option>
                     <option value="Fair">Fair — Usable with minor cosmetic wear</option>
+                    <option value="Minor Wear">Minor Wear — Working, cosmetic wear only</option>
                     <option value="Needs Repair">Needs Repair — Auto-route to Maintenance</option>
                     <option value="Damaged">Damaged — Auto-route to Maintenance</option>
                   </select>
@@ -391,6 +408,7 @@ export const ReturnAssetView: React.FC<ReturnAssetViewProps> = ({
                   </button>
                 </div>
               </form>
+              )}
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-xs border border-dashed border-slate-300 p-12 text-center text-slate-400">

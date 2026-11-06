@@ -88,7 +88,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
       ).length;
       return {
         ...cat,
-        liveTotalAssets: Math.max(matchCount, cat.totalAssets || 0)
+        liveTotalAssets: matchCount
       };
     });
   }, [categories, allAssets]);
@@ -320,8 +320,18 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
                   </p>
                 </div>
 
-                {/* Card Actions Footer - Edit and Delete buttons only */}
+                {/* Card Actions Footer */}
                 <div className="bg-slate-50/80 px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                  {onSelectCategory && (
+                    <button
+                      onClick={() => onSelectCategory(cat.categoryId)}
+                      className="mr-auto px-3 py-1.5 text-[#003279] hover:underline text-xs font-semibold cursor-pointer"
+                      title="Show these assets in the Master Register"
+                    >
+                      View Assets →
+                    </button>
+                  )}
+                  {canManage && (<>
                   <button
                     onClick={(e) => handleOpenEditModal(cat, e)}
                     className="px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-lg transition-all text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer"
@@ -339,6 +349,7 @@ export const CategoriesView: React.FC<CategoriesViewProps> = ({
                     <Trash2 className="w-3.5 h-3.5 text-red-500" />
                     <span>Delete</span>
                   </button>
+                  </>)}
                 </div>
               </div>
             );

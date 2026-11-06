@@ -11,6 +11,7 @@ interface AssetFormModalProps {
   categories: Category[];
   locations: LocationRecord[];
   existingAssets?: Asset[];
+  initialAssetId?: string | null;
   onSuccess: (savedAsset: Asset) => void;
 }
 
@@ -21,6 +22,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   categories,
   locations,
   existingAssets = [],
+  initialAssetId,
   onSuccess
 }) => {
   const isEditing = !!assetToEdit;
@@ -34,8 +36,8 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   const [purchaseDate, setPurchaseDate] = useState('');
   const [purchaseCost, setPurchaseCost] = useState('');
   const [supplier, setSupplier] = useState('');
-  const [officeBranch, setOfficeBranch] = useState('Head Office - Islamabad');
-  const [buildingRoom, setBuildingRoom] = useState('Central Store - Bay A');
+  const [officeBranch, setOfficeBranch] = useState('');
+  const [buildingRoom, setBuildingRoom] = useState('');
   const [condition, setCondition] = useState<AssetCondition>('Good');
   const [status, setStatus] = useState<AssetStatus>('Available');
   const [warrantyExpiry, setWarrantyExpiry] = useState('');
@@ -50,7 +52,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
 
   const availableBranches = useMemo(() => {
     const list = Array.from(new Set(locations.map(l => l.officeBranch?.trim()).filter(Boolean)));
-    return list.length > 0 ? list : ['Bela', 'Head Office - Islamabad', 'Field Office - Quetta'];
+    return list;
   }, [locations]);
 
   // Group locations by Building and OfficeBranch for instant structured selection
@@ -85,8 +87,8 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setPurchaseDate(assetToEdit.purchaseDate || '');
       setPurchaseCost(String(assetToEdit.purchaseCost || 0));
       setSupplier(assetToEdit.supplier || '');
-      setOfficeBranch(assetToEdit.officeBranch || 'Head Office - Islamabad');
-      const targetRoom = assetToEdit.buildingRoom || 'Central Store - Bay A';
+      setOfficeBranch(assetToEdit.officeBranch || '');
+      const targetRoom = assetToEdit.buildingRoom || '';
       setBuildingRoom(targetRoom);
       // Check if targetRoom exists in locations
       const exists = locations.some(l => `${l.building} - ${l.room}` === targetRoom || l.room === targetRoom);
@@ -99,19 +101,20 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setRecordCompletion(assetToEdit.recordCompletion || 'Complete');
       setError(null);
     } else {
-      const initialCatId = categories.length > 0 ? categories[0].categoryId : 'CAT-ITC';
+      const initialCatId = categories.length > 0 ? categories[0].categoryId : '';
       setCategoryId(initialCatId);
-      generateAutoId(initialCatId);
+      if (initialAssetId) setAssetId(initialAssetId.trim().toUpperCase());
+      else generateAutoId(initialCatId);
       setItemName('');
       setBrand('');
       setModel('');
       setSerialNumber('');
-      setPurchaseDate(new Date().toISOString().split('T')[0]);
+      setPurchaseDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]);
       setPurchaseCost('0');
-      const defaultBranch = availableBranches[0] || 'Bela';
+      const defaultBranch = availableBranches[0] || '';
       const defaultRoom = locations.find(l => l.officeBranch === defaultBranch) || locations[0];
       setOfficeBranch(defaultRoom?.officeBranch || defaultBranch);
-      setBuildingRoom(defaultRoom ? `${defaultRoom.building} - ${defaultRoom.room}` : 'Central Store - Bay A');
+      setBuildingRoom(defaultRoom ? `${defaultRoom.building} - ${defaultRoom.room}` : '');
       setIsCustomRoom(false);
       setCondition('Good');
       setStatus('Available');
@@ -121,7 +124,9 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       setRecordCompletion('Complete');
       setError(null);
     }
-  }, [assetToEdit, categories, isOpen, locations]);
+    // Only reset when the modal opens or a different asset is loaded - not on live data updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetToEdit?.assetId, isOpen, initialAssetId, categories.length > 0]);
 
   const generateAutoId = (catId: string) => {
     const selectedCategory = categories.find(c => c.categoryId === catId);
@@ -160,6 +165,14 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
     }
     if (!itemName.trim()) {
       setError('Item Name is required.');
+      return;
+    }
+    if (!categoryId) {
+      setError('Select a category (create one under Categories first if none exist).');
+      return;
+    }
+    if (!isEditing && existingAssets.some(a => a.assetId.toUpperCase() === assetId.trim().toUpperCase())) {
+      setError(`Asset ID ${assetId.trim().toUpperCase()} already exists. Use a different ID.`);
       return;
     }
 
@@ -377,6 +390,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
                 <option value="New">New</option>
                 <option value="Good">Good</option>
                 <option value="Fair">Fair</option>
+                <option value="Minor Wear">Minor Wear</option>
                 <option value="Needs Repair">Needs Repair</option>
                 <option value="Damaged">Damaged</option>
               </select>
@@ -385,18 +399,27 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
             {isEditing && (
               <div>
                 <label className="block text-xs font-bold text-slate-800 mb-1">Asset Status *</label>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as AssetStatus)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
-                >
-                  <option value="Available">Available (In Store)</option>
-                  <option value="Issued">Issued (In Custody)</option>
-                  <option value="Under Maintenance">Under Maintenance</option>
-                  <option value="Missing">Missing</option>
-                  <option value="Lost">Lost</option>
-                  <option value="Retired">Retired</option>
-                </select>
+                {['Issued', 'Missing', 'Lost'].includes(assetToEdit?.status || '') ? (
+                  <>
+                    <div className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">
+                      {assetToEdit?.status}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Use {assetToEdit?.status === 'Issued' ? 'Return Asset' : 'Resolve / Recover'} to change this status.
+                    </p>
+                  </>
+                ) : (
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as AssetStatus)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+                  >
+                    <option value="Available">Available (In Store)</option>
+                    <option value="Under Maintenance">Under Maintenance</option>
+                    <option value="Retired">Retired</option>
+                    <option value="Archived">Archived</option>
+                  </select>
+                )}
               </div>
             )}
           </div>

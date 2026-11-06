@@ -34,11 +34,8 @@ export const ActivityLogsView: React.FC<ActivityLogsViewProps> = ({ logs, userRo
 
   const filtered = logs.filter(l => {
     const q = search.toLowerCase();
-    const matchesSearch = 
-      l.action.toLowerCase().includes(q) ||
-      l.userName.toLowerCase().includes(q) ||
-      l.recordId.toLowerCase().includes(q) ||
-      l.details.toLowerCase().includes(q);
+    const has = (v?: string) => (v || '').toLowerCase().includes(q);
+    const matchesSearch = has(l.action) || has(l.userName) || has(l.recordId) || has(l.details);
     const matchesRecord = recordFilter === 'all' || l.recordType === recordFilter;
     return matchesSearch && matchesRecord;
   });
@@ -102,7 +99,12 @@ export const ActivityLogsView: React.FC<ActivityLogsViewProps> = ({ logs, userRo
           <option value="Employee">Employees</option>
           <option value="Consumable">Consumables</option>
           <option value="Request">Requests</option>
-          <option value="SheetsSync">Sheets Synchronization</option>
+          <option value="Category">Categories</option>
+          <option value="Location">Locations</option>
+          <option value="Maintenance">Maintenance</option>
+          <option value="Audit">Physical Audits</option>
+          <option value="SheetsSync">Sheets Import</option>
+          <option value="System">System</option>
         </select>
       </div>
 

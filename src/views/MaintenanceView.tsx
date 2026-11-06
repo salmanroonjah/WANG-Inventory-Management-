@@ -17,13 +17,35 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
   canManage
 }) => {
   const [isCreating, setIsCreating] = useState(false);
-  const [selectedAssetId, setSelectedAssetId] = useState(assets[0]?.assetId || '');
+  const [selectedAssetId, setSelectedAssetId] = useState('');
   const [issueDescription, setIssueDescription] = useState('');
   const [serviceProvider, setServiceProvider] = useState('');
   const [repairCost, setRepairCost] = useState('0');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Issued assets must be returned first; missing/retired ones cannot be repaired.
+  const eligibleAssets = assets.filter((a) => a.status === 'Available' || a.status === 'Under Maintenance');
+
+  const openForm = () => {
+    setSelectedAssetId('');
+    setIssueDescription('');
+    setServiceProvider('');
+    setRepairCost('0');
+    setFormError(null);
+    setIsCreating(true);
+  };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedAssetId) {
+      setFormError('Select the asset that needs repair.');
+      return;
+    }
+    setIsSubmitting(true);
+    setFormError(null);
     try {
       await api.createMaintenance({
         assetId: selectedAssetId,
@@ -32,25 +54,40 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
         repairCost: parseFloat(repairCost) || 0
       });
       setIsCreating(false);
-      setIssueDescription('');
-      setServiceProvider('');
-      setRepairCost('0');
       onRefresh();
-    } catch (err) {
-      console.error('Failed to create maintenance record', err);
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to create maintenance ticket.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleMarkCompleted = async (recordId: string) => {
+  const handleClose = async (recordId: string, status: 'Completed' | 'Cancelled') => {
+    let workPerformed = '';
+    let finalCost: number | undefined;
+    if (status === 'Completed') {
+      const work = window.prompt('What work was performed?', 'Repaired and tested - working');
+      if (work === null) return;
+      workPerformed = work.trim() || 'Repaired';
+      const cost = window.prompt('Final repair cost (PKR):', String(maintenance.find((m) => m.maintenanceId === recordId)?.repairCost ?? 0));
+      if (cost === null) return;
+      finalCost = Math.max(0, parseFloat(cost) || 0);
+    } else if (!window.confirm('Cancel this repair ticket? The asset will go back to Available if no other repair is open.')) {
+      return;
+    }
+    setBusyId(recordId);
+    setActionError(null);
     try {
       await api.updateMaintenance(recordId, {
-        status: 'Completed',
-        completionDate: new Date().toISOString().split('T')[0],
-        workPerformed: 'Servicing inspected and certified functional. Returned to store inventory.'
+        status,
+        workPerformed: workPerformed || undefined,
+        repairCost: finalCost
       });
       onRefresh();
-    } catch (err) {
-      console.error('Failed to update maintenance record', err);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to update maintenance ticket.');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -72,7 +109,7 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
 
         {canManage && (
           <button
-            onClick={() => setIsCreating(true)}
+            onClick={openForm}
             className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs"
           >
             <PlusCircle className="w-4 h-4" />
@@ -93,11 +130,13 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Target Asset *</label>
                 <select
+                  required
                   value={selectedAssetId}
                   onChange={(e) => setSelectedAssetId(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 font-mono"
                 >
-                  {assets.map(a => (
+                  <option value="">-- Select Asset --</option>
+                  {eligibleAssets.map(a => (
                     <option key={a.assetId} value={a.assetId}>
                       {a.assetId} — {a.itemName} ({a.status})
                     </option>
@@ -140,6 +179,11 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
                 </div>
               </div>
 
+              <p className="text-[11px] text-slate-500">
+                The asset is moved to "Under Maintenance" until the ticket is completed. Issued assets must be returned first.
+              </p>
+              {formError && <p className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-800">{formError}</p>}
+
               <div className="pt-2 flex items-center justify-between">
                 <button
                   type="button"
@@ -150,14 +194,19 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white font-semibold rounded-lg shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white font-semibold rounded-lg shadow-xs"
                 >
-                  Create Ticket & Transition Asset
+                  {isSubmitting ? 'Saving…' : 'Create Ticket & Transition Asset'}
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {actionError && (
+        <div className="p-3 rounded-lg border border-rose-300 bg-rose-50 text-rose-900 text-xs">{actionError}</div>
       )}
 
       {/* Maintenance Tickets Table */}
@@ -177,6 +226,11 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
+              {maintenance.length === 0 && (
+                <tr>
+                  <td colSpan={canManage ? 8 : 7} className="py-10 text-center text-slate-500">No maintenance tickets yet.</td>
+                </tr>
+              )}
               {maintenance.map((m) => (
                 <tr key={m.maintenanceId} className="hover:bg-slate-50">
                   <td className="py-3 px-4 font-mono font-bold text-slate-800">{m.maintenanceId}</td>
@@ -199,15 +253,25 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
                   </td>
                   {canManage && (
                     <td className="py-3 px-4 text-right whitespace-nowrap">
-                      {m.status !== 'Completed' ? (
-                        <button
-                          onClick={() => handleMarkCompleted(m.maintenanceId)}
-                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded text-[11px] shadow-xs"
-                        >
-                          Mark Repaired & Returned
-                        </button>
+                      {m.status !== 'Completed' && m.status !== 'Cancelled' ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            disabled={busyId === m.maintenanceId}
+                            onClick={() => handleClose(m.maintenanceId, 'Completed')}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded text-[11px] shadow-xs"
+                          >
+                            Mark Repaired & Returned
+                          </button>
+                          <button
+                            disabled={busyId === m.maintenanceId}
+                            onClick={() => handleClose(m.maintenanceId, 'Cancelled')}
+                            className="px-2.5 py-1 bg-white border border-slate-300 text-slate-700 font-semibold rounded text-[11px]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       ) : (
-                        <span className="text-[11px] text-slate-400">Certified</span>
+                        <span className="text-[11px] text-slate-400">{m.status === 'Completed' ? `Done ${m.completionDate || ''}` : 'Cancelled'}</span>
                       )}
                     </td>
                   )}
