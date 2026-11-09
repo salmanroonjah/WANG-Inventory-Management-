@@ -160,14 +160,17 @@ export const GoogleSheetsSyncView: React.FC<GoogleSheetsSyncViewProps> = ({
                 <input
                   type="text"
                   value={spreadsheetIdInput}
-                  onChange={(e) => setSpreadsheetIdInput(e.target.value)}
+                  onChange={(e) => {
+                    setSpreadsheetIdInput(e.target.value);
+                    setTestResult(null); // clear the previous result while typing
+                  }}
                   placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
                   className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-900 focus:bg-white focus:ring-2 focus:ring-slate-900"
                 />
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={isTesting || !canManage}
+                  disabled={isTesting || !canManage || !spreadsheetIdInput.trim()}
                   className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
