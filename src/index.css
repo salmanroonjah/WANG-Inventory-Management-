@@ -31,6 +31,116 @@
   background: #94a3b8;
 }
 
+/* ---------- Mobile ---------- */
+
+/* Use the visible screen height (mobile browser toolbars no longer hide the bottom). */
+.h-screen {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Tall pop-ups can always be scrolled on short screens, and their top is never cut off. */
+.fixed.inset-0 {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fixed.inset-0.items-center.justify-center {
+  align-items: flex-start;
+}
+.fixed.inset-0.items-center.justify-center > * {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
+@supports (height: 100dvh) {
+  [class*="max-h-[92vh]"] {
+    max-height: 92dvh !important;
+  }
+  [class*="max-h-[90vh]"] {
+    max-height: 90dvh !important;
+  }
+}
+
+@media (max-width: 639px) {
+  /* iOS zooms the page when a field under 16px is focused; keep inputs at 16px. */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Tables become stacked cards: one card per row, "Label  value" per cell. */
+  table thead {
+    display: none;
+  }
+  table,
+  table tbody,
+  table tr,
+  table td {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  table tr {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    margin: 0 0 0.75rem;
+    padding: 0.35rem 0.75rem;
+    background: #ffffff;
+  }
+  table tbody {
+    padding: 0.75rem 0.5rem 0;
+  }
+  table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.45rem 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    text-align: right !important;
+    white-space: normal !important;
+    max-width: none !important;
+    overflow-wrap: anywhere;
+  }
+  table td:last-child {
+    border-bottom: 0 !important;
+  }
+  table td::before {
+    content: attr(data-label);
+    flex: 0 0 38%;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+  }
+  /* Cells without a header label (checkboxes, empty-state rows) take the full width. */
+  table td[data-label=""]::before,
+  table td:not([data-label])::before,
+  table td[colspan]::before {
+    content: none;
+  }
+  table td[data-label=""],
+  table td[colspan] {
+    justify-content: flex-start;
+    text-align: left !important;
+  }
+  /* Action buttons wrap instead of running off screen. */
+  table td > div {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  /* Truncated cells show their full text on phones. */
+  table td .truncate,
+  table td.truncate {
+    white-space: normal !important;
+    overflow: visible !important;
+  }
+}
+
 @media print {
   body {
     background: white !important;
