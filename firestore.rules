@@ -1,64 +1,217 @@
 rules_version = '2';
+
+// WANG Inventory - Firestore security rules
+//
+// Who is who:
+//   * Everyone must sign in with Google (Firebase Auth, verified email).
+//   * userRoles/{lower-case email} = { employeeId, email } is an index from a
+//     Google email to an employee record. It is only trusted when that
+//     employee record really carries the same email, so a wrong or stale
+//     entry gives no access.
+//   * The role always comes from employees/{employeeId}.role and the
+//     employee must be active (activeStatus != false).
+//
+// What they may do:
+//   * Any active employee: read everything, add activity-log rows, submit
+//     requests for themselves, edit their own phone / designation / station.
+//   * Admin roles (MANAGER_ROLES in src/services/api.ts): change data.
+//   * Approver roles (APPROVER_ROLES): approve / reject / fulfil requests.
+//   * Super Admin only: change anyone's role, create/remove Super Admins,
+//     change a Super Admin's email or active status, edit or delete activity
+//     logs and transaction history.
+//
+// The Google Sheets Apps Script uses a Google service account (OAuth token
+// with the datastore scope). Server-side IAM access like that does not go
+// through these rules, which is why the script keeps working.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------- helpers ----------
     function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 100;
+      return id is string && id.size() > 0 && id.size() <= 150;
     }
 
-    match /assets/{assetId} {
-      allow read: if true;
-      allow write: if isValidId(assetId);
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
     }
 
+    function emailKey() {
+      return request.auth.token.email.lower();
+    }
+
+    function rolePath() {
+      return /databases/$(database)/documents/userRoles/$(emailKey());
+    }
+
+    function myEmployeeId() {
+      return get(rolePath()).data.employeeId;
+    }
+
+    function myEmployeePath() {
+      return /databases/$(database)/documents/employees/$(myEmployeeId());
+    }
+
+    function me() {
+      return get(myEmployeePath()).data;
+    }
+
+    function isActiveEmployee() {
+      return signedIn()
+        && exists(rolePath())
+        && myEmployeeId() is string
+        && exists(myEmployeePath())
+        && me().get('email', '').lower() == emailKey()
+        && me().get('activeStatus', true) != false;
+    }
+
+    function myRole() {
+      return me().get('role', 'Employee');
+    }
+
+    function isManager() {
+      return isActiveEmployee()
+        && myRole() in ['Super Admin', 'Inventory & Finance Admin', 'IT Administrator', 'Inventory Manager'];
+    }
+
+    function isApprover() {
+      return isActiveEmployee()
+        && myRole() in ['Super Admin', 'Inventory & Finance Admin', 'Inventory Manager', 'Approver'];
+    }
+
+    function isSuperAdmin() {
+      return isActiveEmployee() && myRole() == 'Super Admin';
+    }
+
+    // ---------- sign-in index ----------
+    match /userRoles/{email} {
+      // Your own entry (needed right after sign-in), or any entry for admins.
+      allow get: if signedIn() && email == emailKey();
+      allow read: if isManager();
+
+      // Create/refresh your OWN entry: only possible if the employee record
+      // it points to really has your email.
+      allow create, update: if signedIn()
+        && email == emailKey()
+        && request.resource.data.keys().hasOnly(['employeeId', 'email', 'updatedAt'])
+        && request.resource.data.email == email
+        && request.resource.data.employeeId is string
+        && exists(/databases/$(database)/documents/employees/$(request.resource.data.employeeId))
+        && get(/databases/$(database)/documents/employees/$(request.resource.data.employeeId)).data.get('email', '').lower() == email;
+
+      // Admins keep entries in step when they add / edit employees. The
+      // employee record (after this write) must carry the same email.
+      allow create, update: if isManager()
+        && request.resource.data.keys().hasOnly(['employeeId', 'email', 'updatedAt'])
+        && request.resource.data.email == email
+        && request.resource.data.employeeId is string
+        && getAfter(/databases/$(database)/documents/employees/$(request.resource.data.employeeId)).data.get('email', '').lower() == email;
+
+      allow delete: if isManager();
+    }
+
+    // ---------- employees ----------
     match /employees/{employeeId} {
-      allow read: if true;
-      allow write: if isValidId(employeeId);
+      allow read: if isActiveEmployee();
+
+      // Sign-in lookup: a signed-in person may find the record that has their
+      // own email (the app queries where('email', '==', <their email>)).
+      allow list: if signedIn() && resource.data.email == request.auth.token.email;
+      allow list: if signedIn() && resource.data.email == request.auth.token.email.lower();
+
+      allow create: if isManager()
+        && isValidId(employeeId)
+        && (request.resource.data.get('role', 'Employee') != 'Super Admin' || isSuperAdmin());
+
+      // Admin edits. Role changes need a Super Admin; so do changes to a
+      // Super Admin's email / active status (otherwise an admin could take
+      // over a Super Admin account by changing its email).
+      allow update: if isManager()
+        && (request.resource.data.get('role', 'Employee') == resource.data.get('role', 'Employee') || isSuperAdmin())
+        && (
+          resource.data.get('role', 'Employee') != 'Super Admin'
+          || isSuperAdmin()
+          || (
+            request.resource.data.get('email', '') == resource.data.get('email', '')
+            && request.resource.data.get('activeStatus', true) == resource.data.get('activeStatus', true)
+          )
+        );
+
+      // Everyone: their own contact details only.
+      allow update: if isActiveEmployee()
+        && employeeId == myEmployeeId()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'designation', 'officeBranch']);
+
+      allow delete: if isManager()
+        && employeeId != myEmployeeId()
+        && (resource.data.get('role', 'Employee') != 'Super Admin' || isSuperAdmin());
+    }
+
+    // ---------- inventory data: read for staff, write for admins ----------
+    match /assets/{assetId} {
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(assetId);
     }
 
     match /categories/{categoryId} {
-      allow read: if true;
-      allow write: if isValidId(categoryId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(categoryId);
     }
 
     match /locations/{locationId} {
-      allow read: if true;
-      allow write: if isValidId(locationId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(locationId);
     }
 
     match /consumables/{itemCode} {
-      allow read: if true;
-      allow write: if isValidId(itemCode);
-    }
-
-    match /transactions/{transactionId} {
-      allow read: if true;
-      allow write: if isValidId(transactionId);
-    }
-
-    match /requests/{requestId} {
-      allow read: if true;
-      allow write: if isValidId(requestId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(itemCode);
     }
 
     match /maintenance/{maintenanceId} {
-      allow read: if true;
-      allow write: if isValidId(maintenanceId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(maintenanceId);
     }
 
     match /audits/{auditId} {
-      allow read: if true;
-      allow write: if isValidId(auditId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(auditId);
     }
 
+    // History rows: admins add them; only a Super Admin may change or remove them.
+    match /transactions/{transactionId} {
+      allow read: if isActiveEmployee();
+      allow create: if isManager() && isValidId(transactionId);
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ---------- requests ----------
+    match /requests/{requestId} {
+      allow read: if isActiveEmployee();
+      // Staff submit requests for themselves; admins/approvers for anyone.
+      // (A Super Admin restoring a backup may write requests in any status.)
+      allow create: if isSuperAdmin() && isValidId(requestId);
+      allow create: if isActiveEmployee()
+        && isValidId(requestId)
+        && request.resource.data.status == 'Pending'
+        && (isManager() || isApprover() || request.resource.data.requestingEmployeeId == myEmployeeId());
+      allow update: if isApprover();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ---------- activity log: append-only ----------
     match /activityLogs/{logId} {
-      allow read: if true;
-      allow write: if isValidId(logId);
+      allow read: if isActiveEmployee();
+      allow create: if isActiveEmployee() && isValidId(logId);
+      allow update, delete: if isSuperAdmin();
     }
 
+    // ---------- settings ----------
     match /systemSettings/{docId} {
-      allow read: if true;
-      allow write: if isValidId(docId);
+      allow read: if isActiveEmployee();
+      allow write: if isManager() && isValidId(docId);
     }
 
     match /{document=**} {

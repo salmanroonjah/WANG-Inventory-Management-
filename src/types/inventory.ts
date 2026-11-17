@@ -253,17 +253,26 @@ export interface ActivityLog {
 
 export interface GoogleSheetsSyncConfig {
   spreadsheetId: string;
+  /** Full link to the Google Sheet (as pasted by the admin). */
+  spreadsheetUrl?: string;
+  /** Apps Script Web App URL (https://script.google.com/macros/s/.../exec). */
+  webAppUrl?: string;
+  /**
+   * Shared secret sent with every call to the Web App. The same value must be
+   * saved as the SYNC_SECRET Script Property. Calls only carry record IDs, so
+   * the script always re-reads the real data from Firestore.
+   */
+  syncSecret?: string;
   isConfigured: boolean;
   lastSyncTimestamp?: string;
   lastSyncStatus?: 'Success' | 'Failed' | 'In Progress';
   lastSyncError?: string;
-  tabsFound: {
-    startHere: boolean;
-    masterAssets: boolean;
-    categories: boolean;
-    employeesLocations: boolean;
-    assetTransactions: boolean;
-  };
+  /** Who ran the last full sync: the app button, or the script's 10-minute timer. */
+  lastSyncSource?: string;
+  lastTestTimestamp?: string;
+  lastTestOk?: boolean;
+  spreadsheetName?: string;
+  tabsFound?: Record<string, boolean>;
   totalSyncedRows: number;
   autoSyncOnChange: boolean;
 }

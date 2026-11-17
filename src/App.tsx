@@ -49,10 +49,19 @@ import {
 } from './types/inventory.js';
 import { api, MANAGER_ROLES } from './services/api.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
+import { AuthGate } from './components/AuthGate.js';
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AuthGate>{(session) => <InventoryApp currentUser={session} />}</AuthGate>
+    </ErrorBoundary>
+  );
+}
+
+/** The main app. Only rendered once a signed-in Google account is matched to an active employee. */
+function InventoryApp({ currentUser }: { currentUser: UserSession }) {
   const [currentTab, setCurrentTab] = useState<ViewTab>('dashboard');
-  const [currentUser, setCurrentUser] = useState<UserSession>(() => api.getInitialUser());
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -102,7 +111,6 @@ export default function App() {
   const loadData = useCallback(async () => {
     const seq = ++loadSeq.current;
     const results = await Promise.allSettled([
-      api.getCurrentUser(),
       api.getDashboardStats(),
       api.getAssets(),
       api.getEmployees(),
@@ -119,18 +127,17 @@ export default function App() {
     const val = <T,>(r: PromiseSettledResult<T>, set: (v: T) => void) => {
       if (r.status === 'fulfilled') set(r.value);
     };
-    val(results[0] as PromiseSettledResult<UserSession>, setCurrentUser);
-    val(results[1] as PromiseSettledResult<DashboardStats>, setStats);
-    val(results[2] as PromiseSettledResult<Asset[]>, setAssets);
-    val(results[3] as PromiseSettledResult<Employee[]>, setEmployees);
-    val(results[4] as PromiseSettledResult<Category[]>, setCategories);
-    val(results[5] as PromiseSettledResult<LocationRecord[]>, setLocations);
-    val(results[6] as PromiseSettledResult<ConsumableItem[]>, setConsumables);
-    val(results[7] as PromiseSettledResult<AssetTransaction[]>, setTransactions);
-    val(results[8] as PromiseSettledResult<AssetRequest[]>, setRequests);
-    val(results[9] as PromiseSettledResult<MaintenanceRecord[]>, setMaintenance);
-    val(results[10] as PromiseSettledResult<PhysicalAudit[]>, setAudits);
-    val(results[11] as PromiseSettledResult<ActivityLog[]>, setActivityLogs);
+    val(results[0] as PromiseSettledResult<DashboardStats>, setStats);
+    val(results[1] as PromiseSettledResult<Asset[]>, setAssets);
+    val(results[2] as PromiseSettledResult<Employee[]>, setEmployees);
+    val(results[3] as PromiseSettledResult<Category[]>, setCategories);
+    val(results[4] as PromiseSettledResult<LocationRecord[]>, setLocations);
+    val(results[5] as PromiseSettledResult<ConsumableItem[]>, setConsumables);
+    val(results[6] as PromiseSettledResult<AssetTransaction[]>, setTransactions);
+    val(results[7] as PromiseSettledResult<AssetRequest[]>, setRequests);
+    val(results[8] as PromiseSettledResult<MaintenanceRecord[]>, setMaintenance);
+    val(results[9] as PromiseSettledResult<PhysicalAudit[]>, setAudits);
+    val(results[10] as PromiseSettledResult<ActivityLog[]>, setActivityLogs);
     const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     setLoadError(failed ? failed.reason?.message || 'Some records could not be loaded.' : api.getSyncError());
     setIsLoading(false);
@@ -151,7 +158,6 @@ export default function App() {
       if (payload.audits) setAudits(payload.audits);
       if (payload.activityLogs) setActivityLogs(payload.activityLogs);
       api.getDashboardStats().then(setStats).catch(() => {});
-      if (payload.employees) api.getCurrentUser().then(setCurrentUser).catch(() => {});
     });
     return unsubscribe;
   }, [loadData]);
@@ -219,29 +225,17 @@ export default function App() {
     }
   };
 
-  const handleSwitchUser = async (employeeId: string) => {
-    try {
-      const emp = employees.find((e) => e.employeeId === employeeId);
-      const updatedUser = await api.switchRole(emp?.role || 'Employee', employeeId);
-      setCurrentUser(updatedUser);
-      await loadData();
-    } catch (err: any) {
-      alert(err?.message || 'Could not switch user.');
-    }
-  };
-
   const handleClearActivityLogs = async () => {
     await api.clearActivityLogs();
     await loadData();
   };
 
   return (
-    <ErrorBoundary>
+    <>
       <div className="h-screen flex flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 antialiased">
         <Navbar
           currentUser={currentUser}
-          employees={employees}
-          onSwitchUser={handleSwitchUser}
+          onSignOut={() => api.signOut()}
           onOpenScanner={() => handleOpenScanner()}
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
         />
@@ -416,7 +410,6 @@ export default function App() {
                   onOpenReturnForAsset={(a) => setReturnModalAsset(a)}
                   onPrintVoucher={(a, tx) => setVoucherData({ asset: a, transaction: tx })}
                   onRefreshData={loadData}
-                  onUpdateCurrentUser={(updated) => setCurrentUser(updated)}
                   canManage={canManage}
                 />
               )}
@@ -565,6 +558,6 @@ export default function App() {
           />
         )}
       </div>
-    </ErrorBoundary>
+    </>
   );
 }

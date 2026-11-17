@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { Camera, ChevronDown, Menu, Download, Shield, User } from 'lucide-react';
-import { Employee, UserRole, UserSession } from '../types/inventory.js';
+import { Camera, ChevronDown, Menu, Download, Shield, LogOut, Mail } from 'lucide-react';
+import { UserRole, UserSession } from '../types/inventory.js';
 import { api } from '../services/api.js';
 import wangLogo from '../assets/wang_logo.png';
 
 interface NavbarProps {
   currentUser: UserSession;
-  employees: Employee[];
-  onSwitchUser: (employeeId: string) => void;
+  onSignOut: () => void;
   onOpenScanner: () => void;
   onToggleMobileMenu: () => void;
 }
@@ -24,13 +23,12 @@ const ROLE_ICON: Partial<Record<UserRole, string>> = {
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
-  employees,
-  onSwitchUser,
+  onSignOut,
   onOpenScanner,
   onToggleMobileMenu
 }) => {
   const [showRoleMenu, setShowRoleMenu] = useState(false);
-  const activeEmployees = employees.filter((e) => e.activeStatus);
+  const [signingOut, setSigningOut] = useState(false);
 
   const handleExportBackup = () => {
     try {
@@ -115,7 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           )}
 
-          {/* Role Switcher Dropdown (The 3 WANG Admins) */}
+          {/* Signed-in user menu */}
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
@@ -143,67 +141,35 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onClick={() => setShowRoleMenu(false)} 
                 />
                 <div className="absolute right-0 mt-2 w-72 bg-white text-slate-900 rounded-xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-3.5 py-2 border-b border-slate-100">
-                    <p className="text-[11px] font-black text-[#003279] uppercase tracking-wider flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-[#f1cc11] fill-current" />
-                      Who is using this device?
-                    </p>
-                    <p className="text-[10px] text-slate-500">
-                      Actions are recorded under the selected staff member. Their role comes from the Employees page.
-                    </p>
-                  </div>
-
-                  <div className="p-1 space-y-1 max-h-80 overflow-y-auto">
-                    {activeEmployees.length === 0 && (
-                      <p className="p-3 text-[11px] text-slate-500">No active employees registered yet.</p>
-                    )}
-                    {activeEmployees.map((emp) => {
-                      const isActive = currentUser.employeeId === emp.employeeId;
-                      const opt = {
-                        title: emp.fullName,
-                        subtitle: `${emp.role || 'Employee'} · ${emp.employeeId}`,
-                        icon: ROLE_ICON[emp.role || 'Employee'] || '👤'
-                      };
-
-                      return (
-                        <button
-                          key={emp.employeeId}
-                          onClick={() => {
-                            onSwitchUser(emp.employeeId);
-                            setShowRoleMenu(false);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
-                            isActive 
-                              ? 'bg-blue-50 border border-blue-200' 
-                              : 'hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-base">{opt.icon}</span>
-                            <div>
-                              <div className={`font-bold ${isActive ? 'text-[#003279]' : 'text-slate-800'}`}>
-                                {opt.title}
-                              </div>
-                              <div className="text-[10px] text-slate-500 leading-tight">
-                                {opt.subtitle}
-                              </div>
-                            </div>
-                          </div>
-                          {isActive && (
-                            <span className="text-[10px] font-black text-[#003279] bg-[#f1cc11] px-2 py-0.5 rounded shadow-2xs">
-                              Active
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="border-t border-slate-100 mt-1 pt-2 px-3 pb-1">
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                      <User className="w-3 h-3 text-[#003279]" />
-                      <span>Secure login will replace this selector in the security update.</span>
+                  <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-start gap-2.5">
+                    <span className="text-lg leading-none mt-0.5">{ROLE_ICON[currentUser.role] || '👤'}</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#003279] truncate">{currentUser.name}</p>
+                      <p className="text-[10px] text-slate-500 flex items-center gap-1 break-all">
+                        <Mail className="w-3 h-3 shrink-0" />
+                        {currentUser.email}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {currentUser.role}
+                        {currentUser.employeeId ? ` · ${currentUser.employeeId}` : ''}
+                      </p>
                     </div>
+                  </div>
+                  <p className="px-3.5 py-2 text-[10px] text-slate-500 leading-snug">
+                    Your role comes from your employee record. Ask a Super Admin if it needs to change.
+                  </p>
+                  <div className="px-2 pt-1">
+                    <button
+                      onClick={() => {
+                        setSigningOut(true);
+                        onSignOut();
+                      }}
+                      disabled={signingOut}
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 flex items-center gap-2"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      {signingOut ? 'Signing out…' : 'Sign out'}
+                    </button>
                   </div>
                 </div>
               </>

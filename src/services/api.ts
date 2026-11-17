@@ -11,19 +11,27 @@
  *  - Counters (assets per category / location, assets per employee) are derived
  *    from the asset list instead of being stored, so they can never drift.
  *
- * The signed-in user is kept per device (localStorage) until real login is added.
+ * Login: Google sign-in (Firebase Auth). The signed-in Google email is matched
+ * (case-insensitively) to an employee record, and that record's role decides
+ * what the user may do. Firestore security rules enforce the same roles on the
+ * server, using the userRoles/{email} index kept up to date by this file.
  */
 import {
   collection,
   doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
   onSnapshot,
   runTransaction,
   writeBatch,
   setDoc,
+  deleteDoc,
   WriteBatch,
   Transaction
 } from 'firebase/firestore';
-import { db, ensureFirebaseAuth } from './firebase.js';
+import { db, signInWithGoogle, signOutEverywhere, completeRedirectSignIn, watchAuth, User } from './firebase.js';
 import {
   Asset,
   AssetCondition,
@@ -101,57 +109,176 @@ function friendlyError(err: any, fallback: string): Error {
 }
 
 // ---------------------------------------------------------------------------
-// Session (per device)
+// Session: Google sign-in mapped to an employee record
 // ---------------------------------------------------------------------------
 
-const SESSION_KEY = 'WANG_SESSION_USER';
-const FALLBACK_USER: UserSession = {
-  userId: 'USR-LOCAL',
-  name: 'Administrator',
-  email: '',
-  role: 'Super Admin'
-};
+/** Where the sign-in flow is. The app shows the main screens only when "ready". */
+export type AuthStatus = 'loading' | 'signedOut' | 'checking' | 'notRegistered' | 'inactive' | 'ready' | 'error';
 
-function readSession(): UserSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (raw) {
-      const u = JSON.parse(raw);
-      if (u && u.role) return u;
-    }
-  } catch {}
-  return null;
+export interface AuthState {
+  status: AuthStatus;
+  /** Google account email (as Google returned it). */
+  email?: string;
+  displayName?: string;
+  photoURL?: string;
+  session?: UserSession;
+  error?: string;
 }
 
-function writeSession(u: UserSession) {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-  } catch {}
+/** Lower-case email: the document ID in the userRoles index. */
+export const emailKey = (email: unknown) => str(email).trim().toLowerCase();
+
+let authState: AuthState = { status: 'loading' };
+let authUser: User | null = null;
+let session: UserSession | null = null;
+const authListeners = new Set<(s: AuthState) => void>();
+let authStarted = false;
+
+function setAuthState(next: AuthState) {
+  authState = next;
+  session = next.status === 'ready' && next.session ? next.session : null;
+  authListeners.forEach((cb) => cb(authState));
 }
 
-// Data from older versions of the app lived in localStorage and could show
-// demo records instead of the real database. Remove it once.
+// Data from older versions of the app lived in localStorage (including the old
+// "who is using this device" choice). Remove it once.
 try {
   localStorage.removeItem('WANG_INVENTORY_LOCAL_DB');
   localStorage.removeItem('WANG_DELETED_ASSET_IDS');
+  localStorage.removeItem('WANG_SESSION_USER');
 } catch {}
 
-function sessionFromEmployee(e: Employee, role?: UserRole): UserSession {
+function sessionFromEmployee(e: Employee): UserSession {
   return {
     userId: `USR-${e.employeeId}`,
     name: e.fullName,
     email: e.email,
-    role: role || e.role || 'Employee',
+    role: e.role || 'Employee',
     employeeId: e.employeeId,
     officeBranch: e.officeBranch
   };
 }
 
+const isPermissionError = (e: any) => e?.code === 'permission-denied';
+
+/**
+ * Finds the employee record for a Google account:
+ *  1. the userRoles/{email} index (fast path, also what the security rules use);
+ *  2. otherwise a query on employees.email (the rules allow this only for the
+ *     caller's own email); the index entry is then created for next time.
+ */
+async function findEmployeeForEmail(email: string): Promise<Employee | null> {
+  const key = emailKey(email);
+  try {
+    const m = await getDoc(doc(db, 'userRoles', key));
+    const empId = m.exists() ? str(m.data().employeeId) : '';
+    if (empId) {
+      const e = await getDoc(doc(db, 'employees', empId));
+      if (e.exists() && emailKey(e.data().email) === key) return normalizers.employees(e.data());
+    }
+  } catch (e) {
+    if (!isPermissionError(e)) throw e;
+  }
+  for (const candidate of Array.from(new Set([email.trim(), key]))) {
+    try {
+      const q = await getDocs(query(collection(db, 'employees'), where('email', '==', candidate)));
+      const hit = q.docs.find((d) => emailKey(d.data().email) === key);
+      if (hit) return normalizers.employees(hit.data());
+    } catch (e) {
+      if (!isPermissionError(e)) throw e;
+    }
+  }
+  return null;
+}
+
+/** Creates/refreshes userRoles/{email} for the signed-in user. Failures are harmless. */
+async function claimRoleIndex(e: Employee) {
+  const key = emailKey(e.email);
+  if (!key) return;
+  try {
+    await setDoc(doc(db, 'userRoles', key), { employeeId: e.employeeId, email: key, updatedAt: nowIso() });
+  } catch (err) {
+    // The old (open) rules do not know the userRoles collection; that is fine.
+    console.warn('[auth] could not update userRoles index:', (err as any)?.code || err);
+  }
+}
+
+async function resolveSignedInUser(user: User) {
+  const email = str(user.email);
+  const base: AuthState = {
+    status: 'checking',
+    email,
+    displayName: user.displayName || '',
+    photoURL: user.photoURL || ''
+  };
+  setAuthState(base);
+  if (!email) {
+    setAuthState({ ...base, status: 'notRegistered' });
+    return;
+  }
+  try {
+    const emp = await findEmployeeForEmail(email);
+    if (authUser !== user) return; // signed out / switched meanwhile
+    if (!emp) {
+      setAuthState({ ...base, status: 'notRegistered' });
+      return;
+    }
+    if (!emp.activeStatus) {
+      setAuthState({ ...base, status: 'inactive' });
+      return;
+    }
+    await claimRoleIndex(emp);
+    if (authUser !== user) return;
+    setAuthState({ ...base, status: 'ready', session: sessionFromEmployee(emp) });
+    startSync();
+  } catch (err: any) {
+    if (authUser !== user) return;
+    setAuthState({
+      ...base,
+      status: 'error',
+      error:
+        err?.code === 'unavailable'
+          ? 'Could not reach the database. Please check your internet connection and try again.'
+          : err?.message || 'Could not check your account.'
+    });
+  }
+}
+
+function startAuth() {
+  if (authStarted) return;
+  authStarted = true;
+  completeRedirectSignIn().then((msg) => {
+    if (msg && authState.status === 'signedOut') setAuthState({ status: 'signedOut', error: msg });
+  });
+  watchAuth((user) => {
+    authUser = user;
+    if (!user) {
+      setAuthState({ status: 'signedOut' });
+      return;
+    }
+    resolveSignedInUser(user);
+  });
+}
+
+/** Keeps the session in step with live changes to the user's own employee record. */
+function refreshSessionFromCache() {
+  if (!session?.employeeId || authState.status !== 'ready') return;
+  const e = findEmployee(session.employeeId);
+  if (!e || emailKey(e.email) !== emailKey(authState.email)) {
+    setAuthState({ ...authState, status: 'notRegistered', session: undefined });
+    return;
+  }
+  if (!e.activeStatus) {
+    setAuthState({ ...authState, status: 'inactive', session: undefined });
+    return;
+  }
+  const next = sessionFromEmployee(e);
+  if (JSON.stringify(next) !== JSON.stringify(session)) setAuthState({ ...authState, session: next });
+}
+
 function currentUser(): UserSession {
-  const s = readSession();
-  if (s) return s;
-  const admin = cache.employees.find((e) => e.role === 'Super Admin' && e.activeStatus !== false);
-  return admin ? sessionFromEmployee(admin) : FALLBACK_USER;
+  if (!session) throw new Error('Please sign in with Google first.');
+  return session;
 }
 
 function requireRole(roles: UserRole[], action: string) {
@@ -323,7 +450,9 @@ let snapWaiters: Array<() => void> = [];
 
 async function waitForSync(touched: Set<string>, before: Record<string, number>, timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;
-  const pending = () => [...touched].some((c) => (snapCount[c] || 0) <= (before[c] || 0));
+  // Only collections with a realtime listener (not e.g. the userRoles index) can be waited on.
+  const watched = [...touched].filter((c) => (COLLECTIONS as readonly string[]).includes(c));
+  const pending = () => watched.some((c) => (snapCount[c] || 0) <= (before[c] || 0));
   while (pending() && Date.now() < deadline) {
     await new Promise<void>((r) => {
       snapWaiters.push(r);
@@ -332,33 +461,42 @@ async function waitForSync(touched: Set<string>, before: Record<string, number>,
   }
 }
 
-/** Wraps a transaction/batch so every set/update/delete records its collection. */
-function trackWrites<W extends object>(w: W, touched: Set<string>): W {
+/** One written document, reported to the Google Sheet after the write commits. */
+interface ChangedDoc {
+  collection: string;
+  id: string;
+}
+
+/** Wraps a transaction/batch so every set/update/delete records its collection and document. */
+function trackWrites<W extends object>(w: W, touched: Set<string>, changed: Map<string, ChangedDoc>): W {
   return new Proxy(w, {
     get(target: any, prop) {
       const v = target[prop];
       if (prop === 'set' || prop === 'update' || prop === 'delete') {
         return (ref: any, ...args: any[]) => {
-          if (ref?.parent?.id) touched.add(ref.parent.id);
+          if (ref?.parent?.id) {
+            touched.add(ref.parent.id);
+            changed.set(`${ref.parent.id}/${ref.id}`, { collection: ref.parent.id, id: ref.id });
+          }
           v.call(target, ref, ...args);
-          return receiverFor(target);
+          return target;
         };
       }
       return typeof v === 'function' ? v.bind(target) : v;
     }
   });
-  function receiverFor(t: any) {
-    return t;
-  }
 }
 
 async function runTx<T>(fn: (t: Transaction) => Promise<T>): Promise<T> {
   const before = { ...snapCount };
   const touched = new Set<string>();
+  const changed = new Map<string, ChangedDoc>();
   const res = await runTransaction(db, (t) => {
     touched.clear(); // transactions may retry
-    return fn(trackWrites(t, touched));
+    changed.clear();
+    return fn(trackWrites(t, touched, changed));
   });
+  queueSheetPush([...changed.values()]);
   await waitForSync(touched, before);
   return res;
 }
@@ -366,19 +504,98 @@ async function runTx<T>(fn: (t: Transaction) => Promise<T>): Promise<T> {
 function newBatch(): WriteBatch {
   const before = { ...snapCount };
   const touched = new Set<string>();
+  const changed = new Map<string, ChangedDoc>();
   const b = writeBatch(db);
-  const tracked = trackWrites(b, touched);
+  const tracked = trackWrites(b, touched, changed);
   return new Proxy(tracked, {
     get(target: any, prop) {
       if (prop === 'commit') {
         return async () => {
           await b.commit();
+          queueSheetPush([...changed.values()]);
           await waitForSync(touched, before);
         };
       }
       return target[prop];
     }
   });
+}
+
+// --- App → Google Sheet live push ----------------------------------------
+// After a successful write, the IDs of the changed records are sent to the
+// Apps Script Web App. The script re-reads those records from Firestore
+// itself, so the call carries no data and cannot be used to fake records.
+const SHEET_COLLECTIONS = new Set(['assets', 'categories', 'employees', 'locations', 'transactions', 'consumables']);
+const pendingPush = new Map<string, ChangedDoc>();
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPushError: string | null = null;
+let lastPushAt: string | null = null;
+
+function queueSheetPush(changes: ChangedDoc[]) {
+  const cfg = sheetsConfigCache;
+  if (!cfg?.webAppUrl || !cfg.syncSecret || cfg.autoSyncOnChange === false) return;
+  let added = false;
+  for (const c of changes) {
+    if (!SHEET_COLLECTIONS.has(c.collection)) continue;
+    pendingPush.set(`${c.collection}/${c.id}`, c);
+    added = true;
+  }
+  if (!added) return;
+  if (pushTimer) clearTimeout(pushTimer);
+  // Small delay so a burst of saves goes out as one call.
+  pushTimer = setTimeout(flushSheetPush, 1500);
+}
+
+async function flushSheetPush() {
+  pushTimer = null;
+  const cfg = sheetsConfigCache;
+  const changes = [...pendingPush.values()];
+  pendingPush.clear();
+  if (!cfg?.webAppUrl || !cfg.syncSecret || !changes.length) return;
+  // Very large changes (restores, big imports) are cheaper as one full sync.
+  const body = changes.length > 300 ? { action: 'fullSync', source: 'app-bulk-change' } : { action: 'changes', changes };
+  try {
+    const res = await callSheetsScript(cfg.webAppUrl, cfg.syncSecret, body);
+    lastPushError = res.ok ? null : res.error || 'The sheet script reported an error.';
+  } catch (e: any) {
+    lastPushError = e?.message || String(e);
+  }
+  lastPushAt = nowIso();
+  if (lastPushError) console.warn('[sheets] live update failed (the 10-minute full sync will catch up):', lastPushError);
+}
+
+/**
+ * Calls the Apps Script Web App. text/plain keeps it a "simple" request, so the
+ * browser does not need a CORS pre-flight (Apps Script cannot answer one).
+ */
+async function callSheetsScript(webAppUrl: string, secret: string, body: Record<string, unknown>): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ ...body, secret }),
+      redirect: 'follow'
+    });
+  } catch {
+    throw new Error(
+      'Could not reach the Apps Script Web App. Check the Web App URL, that it is deployed with "Who has access: Anyone", and your internet connection.'
+    );
+  }
+  const text = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (/<html/i.test(text)) {
+      throw new Error(
+        'The Web App answered with a web page instead of data. Usually it is not deployed with "Who has access: Anyone", or the URL is not the one ending in /exec.'
+      );
+    }
+    throw new Error(`Unexpected answer from the Web App (HTTP ${res.status}).`);
+  }
+  if (!res.ok && data?.ok === undefined) throw new Error(`The Web App returned HTTP ${res.status}.`);
+  return data;
 }
 
 let sheetsConfigCache: GoogleSheetsSyncConfig | null = null;
@@ -435,7 +652,7 @@ function startSync() {
   // If the device is offline and has no local cache yet, don't block the UI forever.
   setTimeout(resolveReady, 8000);
 
-  ensureFirebaseAuth().finally(() => {
+  {
     for (const name of COLLECTIONS) {
       onSnapshot(
         collection(db, name),
@@ -450,6 +667,10 @@ function startSync() {
           waiters.forEach((r) => r());
           loaded.add(name);
           lastSyncError = null;
+          if (name === 'employees') {
+            refreshSessionFromCache();
+            backfillRoleIndex();
+          }
           if (loaded.size === COLLECTIONS.length) resolveReady();
           const payload = payloadFor(name);
           subscribers.forEach((cb) => cb(payload));
@@ -469,7 +690,52 @@ function startSync() {
       },
       () => {}
     );
-  });
+  }
+}
+
+/**
+ * Keeps userRoles/{email} (the sign-in index used by the security rules) in
+ * step after an employee is added, edited or removed. Done after the main
+ * save and best-effort: a stale or missing entry never grants access (the
+ * rules re-check the employee record) and is repaired at the person's next
+ * sign-in or by the admin backfill below.
+ */
+async function syncRoleIndex(employeeId: string, oldEmail: string, newEmail: string) {
+  const oldKey = emailKey(oldEmail);
+  const newKey = emailKey(newEmail);
+  try {
+    if (oldKey && oldKey !== newKey && !oldKey.includes('/')) await deleteDoc(doc(db, 'userRoles', oldKey));
+    if (newKey && !newKey.includes('/')) await setDoc(doc(db, 'userRoles', newKey), { employeeId, email: newKey, updatedAt: nowIso() });
+  } catch (err) {
+    console.warn('[auth] userRoles index not updated:', (err as any)?.code || err);
+  }
+}
+
+/**
+ * Admins: make sure every employee with an email has a userRoles/{email} entry
+ * (needed by the security rules; covers records whose email has capital letters
+ * or that were created before this update). Runs once per page load.
+ */
+let backfillDone = false;
+async function backfillRoleIndex() {
+  if (backfillDone || !session || !MANAGER_ROLES.includes(session.role)) return;
+  backfillDone = true;
+  try {
+    const existing = await getDocs(collection(db, 'userRoles'));
+    const have = new Map(existing.docs.map((d) => [d.id, str(d.data().employeeId)]));
+    const ops: Array<(b: WriteBatch) => void> = [];
+    const seen = new Set<string>();
+    for (const e of cache.employees) {
+      const key = emailKey(e.email);
+      if (!key || key.includes('/') || seen.has(key)) continue;
+      seen.add(key);
+      if (have.get(key) === e.employeeId) continue;
+      ops.push((b) => b.set(doc(db, 'userRoles', key), { employeeId: e.employeeId, email: key, updatedAt: nowIso() }));
+    }
+    if (ops.length) await commitInChunks(ops);
+  } catch (err) {
+    console.warn('[auth] userRoles backfill skipped:', (err as any)?.code || err);
+  }
 }
 
 async function ready() {
@@ -606,6 +872,23 @@ function normalizeCategoryId(id: string): string {
   return c.startsWith('CAT-') ? c : `CAT-${c}`;
 }
 
+/** Random 32-character secret for the Apps Script Web App. */
+function makeSecret(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Merges status fields into systemSettings/sheetsConfig (best effort). */
+async function saveSheetsStatus(fields: Partial<GoogleSheetsSyncConfig>) {
+  try {
+    await setDoc(doc(db, 'systemSettings', 'sheetsConfig'), fields, { merge: true });
+    if (sheetsConfigCache) sheetsConfigCache = { ...sheetsConfigCache, ...fields };
+  } catch (e) {
+    console.warn('[sheets] could not save status:', (e as any)?.code || e);
+  }
+}
+
 function csvCell(v: unknown) {
   return str(v);
 }
@@ -615,14 +898,47 @@ function csvCell(v: unknown) {
 // ---------------------------------------------------------------------------
 
 export const api = {
-  // ----- session -----
+  // ----- sign-in / session -----
+  /** Current sign-in state; subscribe with onAuthChange. */
+  getAuthState(): AuthState {
+    startAuth();
+    return authState;
+  },
+
+  onAuthChange(cb: (s: AuthState) => void): () => void {
+    startAuth();
+    authListeners.add(cb);
+    cb(authState);
+    return () => {
+      authListeners.delete(cb);
+    };
+  },
+
+  async signIn(): Promise<void> {
+    startAuth();
+    await signInWithGoogle();
+  },
+
+  /** Signs out, clears this device's offline copy of the data and reloads the page. */
+  async signOut(): Promise<void> {
+    try {
+      await signOutEverywhere();
+    } finally {
+      window.location.reload();
+    }
+  },
+
+  /** Re-checks the signed-in Google account against the employee list (after an admin adds it). */
+  async recheckAccount(): Promise<void> {
+    if (authUser) await resolveSignedInUser(authUser);
+  },
+
+  /** The signed-in user. Only valid once getAuthState().status is "ready". */
   getInitialUser(): UserSession {
-    startSync();
-    return readSession() || FALLBACK_USER;
+    return currentUser();
   },
 
   getInitialStats(): DashboardStats {
-    startSync();
     return computeStats();
   },
 
@@ -632,31 +948,8 @@ export const api = {
 
   async getCurrentUser(): Promise<UserSession> {
     await ready();
-    const s = readSession();
-    if (s) {
-      // Keep the session in step with the employee record (name/role edits).
-      const e = s.employeeId ? findEmployee(s.employeeId) : undefined;
-      if (e) {
-        const refreshed = { ...sessionFromEmployee(e), role: e.role || s.role };
-        writeSession(refreshed);
-        return refreshed;
-      }
-      return s;
-    }
-    const u = currentUser();
-    writeSession(u);
-    return u;
-  },
-
-  async switchRole(role: UserRole, employeeId?: string, _name?: string): Promise<UserSession> {
-    await ready();
-    const emp =
-      (employeeId && findEmployee(employeeId)) ||
-      cache.employees.find((e) => e.role === role && e.activeStatus) ||
-      (role === 'Inventory Manager' ? cache.employees.find((e) => e.role === 'Inventory & Finance Admin') : undefined);
-    const u: UserSession = emp ? sessionFromEmployee(emp, role) : { ...FALLBACK_USER, role };
-    writeSession(u);
-    return u;
+    refreshSessionFromCache();
+    return currentUser();
   },
 
   async getDashboardStats(): Promise<DashboardStats> {
@@ -1160,12 +1453,14 @@ export const api = {
     } catch (e) {
       throw friendlyError(e, 'Failed to add employee.');
     }
+    await syncRoleIndex(employeeId, '', email);
     return { success: true, message: `Employee ${fullName} registered`, employee };
   },
 
   async updateEmployee(id: string, updates: Partial<Employee>): Promise<{ success: boolean; message: string; employee: Employee }> {
     const me = currentUser();
     const editingSelf = !!me.employeeId && same(me.employeeId, id);
+    const isManager = MANAGER_ROLES.includes(me.role);
     if (!editingSelf) requireRole(MANAGER_ROLES, 'edit employees');
     await ready();
     const current = findEmployee(id);
@@ -1174,6 +1469,32 @@ export const api = {
     for (const k of ['fullName', 'department', 'designation', 'email', 'phone', 'officeBranch'] as const) {
       if (updates[k] !== undefined) next[k] = str(updates[k]).trim();
     }
+    if (editingSelf && emailKey(next.email) !== emailKey(current.email)) {
+      throw new Error('This is the Google email you sign in with. Ask another admin to change it, otherwise you would lock yourself out.');
+    }
+
+    // Staff without an admin role may only edit their own contact details.
+    if (!isManager) {
+      if (next.fullName !== current.fullName || next.department !== current.department) {
+        throw new Error('Only an admin can change your name or department.');
+      }
+      if (updates.activeStatus !== undefined || (updates.role && updates.role !== current.role)) {
+        throw new Error('Only an admin can change your status or role.');
+      }
+      const patch: Partial<Employee> = {};
+      for (const k of ['designation', 'phone', 'officeBranch'] as const) if (next[k] !== current[k]) patch[k] = next[k];
+      if (!Object.keys(patch).length) return { success: true, message: 'Nothing changed', employee: current };
+      const b = newBatch();
+      b.update(doc(db, 'employees', current.employeeId), patch);
+      writeLog(b, makeLog('UPDATE_EMPLOYEE', 'Employee', current.employeeId, `${current.fullName} updated their contact details.`));
+      try {
+        await b.commit();
+      } catch (e) {
+        throw friendlyError(e, 'Failed to update your profile.');
+      }
+      return { success: true, message: 'Profile updated', employee: { ...current, ...patch } };
+    }
+
     if (!next.fullName) throw new Error('Full name is required.');
     if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) throw new Error('Email address is not valid.');
     if (next.email && cache.employees.some((e) => !same(e.employeeId, id) && e.email && same(e.email, next.email))) {
@@ -1196,6 +1517,14 @@ export const api = {
       next.role = updates.role;
     }
 
+    if (
+      current.role === 'Super Admin' &&
+      me.role !== 'Super Admin' &&
+      (emailKey(next.email) !== emailKey(current.email) || next.activeStatus !== current.activeStatus)
+    ) {
+      throw new Error("Only a Super Admin can change a Super Admin's email or active status.");
+    }
+
     const ops: Array<(b: WriteBatch) => void> = [];
     const { assignedAssetCount, ...rest } = next;
     ops.push((b) => b.set(doc(db, 'employees', current.employeeId), rest));
@@ -1211,7 +1540,7 @@ export const api = {
     } catch (e) {
       throw friendlyError(e, 'Failed to update employee.');
     }
-    if (editingSelf) writeSession({ ...sessionFromEmployee(next), role: next.role || me.role });
+    await syncRoleIndex(current.employeeId, current.email, next.email);
     return { success: true, message: `Employee ${next.fullName} updated`, employee: { ...next, assignedAssetCount: issued.length } };
   },
 
@@ -1225,6 +1554,7 @@ export const api = {
     if (emp.role === 'Super Admin' && cache.employees.filter((e) => e.role === 'Super Admin').length <= 1) {
       throw new Error('This is the only Super Admin and cannot be deleted.');
     }
+    if (emp.role === 'Super Admin') requireRole(['Super Admin'], 'remove a Super Admin');
     const issued = cache.assets.filter((a) => a.status === 'Issued' && same(a.assignedEmployeeId, id));
     if (issued.length) throw new Error(`Cannot delete: ${emp.fullName} holds ${issued.length} asset(s). Return them first.`);
     const b = newBatch();
@@ -1235,30 +1565,23 @@ export const api = {
     } catch (e) {
       throw friendlyError(e, 'Failed to delete employee.');
     }
+    await syncRoleIndex(emp.employeeId, emp.email, '');
     return { success: true, message: `Employee ${emp.fullName} removed` };
   },
 
-  async updateUserProfile(updates: { name?: string; email?: string; phone?: string; officeBranch?: string; designation?: string }): Promise<UserSession> {
+  /** Edits the signed-in user's own employee record. The sign-in email cannot be changed here. */
+  async updateUserProfile(updates: { name?: string; phone?: string; officeBranch?: string; designation?: string }): Promise<UserSession> {
     await ready();
     const me = currentUser();
-    if (me.employeeId && findEmployee(me.employeeId)) {
-      await api.updateEmployee(me.employeeId, {
-        fullName: updates.name,
-        email: updates.email,
-        phone: updates.phone,
-        officeBranch: updates.officeBranch,
-        designation: updates.designation
-      });
-      return currentUser();
-    }
-    const u: UserSession = {
-      ...me,
-      name: updates.name?.trim() || me.name,
-      email: updates.email?.trim() ?? me.email,
-      officeBranch: updates.officeBranch?.trim() ?? me.officeBranch
-    };
-    writeSession(u);
-    return u;
+    if (!me.employeeId || !findEmployee(me.employeeId)) throw new Error('Your employee record was not found.');
+    await api.updateEmployee(me.employeeId, {
+      fullName: updates.name,
+      phone: updates.phone,
+      officeBranch: updates.officeBranch,
+      designation: updates.designation
+    });
+    refreshSessionFromCache();
+    return currentUser();
   },
 
   // ----- categories -----
@@ -1963,34 +2286,115 @@ export const api = {
         isConfigured: false,
         tabsFound: { startHere: false, masterAssets: false, categories: false, employeesLocations: false, assetTransactions: false },
         totalSyncedRows: 0,
-        autoSyncOnChange: false
+        autoSyncOnChange: true
       }
     );
   },
 
-  async testSheetsConnection(spreadsheetIdOrUrl: string): Promise<{ success: boolean; message: string; rowCount?: number }> {
+  /**
+   * Saves the sheet link and the Apps Script Web App URL. A shared secret is
+   * created the first time (or when asked) and must be copied into the
+   * script's SYNC_SECRET Script Property.
+   */
+  async saveSheetsConfig(input: { sheetLink: string; webAppUrl: string; autoSyncOnChange?: boolean; newSecret?: boolean }): Promise<GoogleSheetsSyncConfig> {
     requireRole(MANAGER_ROLES, 'configure Google Sheets');
-    const m = /\/d\/([a-zA-Z0-9-_]+)/.exec(spreadsheetIdOrUrl);
-    const id = (m ? m[1] : spreadsheetIdOrUrl).trim();
+    const link = input.sheetLink.trim();
+    const m = /\/d\/([a-zA-Z0-9-_]+)/.exec(link);
+    const id = (m ? m[1] : link).trim();
     if (!/^[a-zA-Z0-9-_]{20,}$/.test(id)) {
-      return { success: false, message: 'That does not look like a Google Sheets ID. Copy the long code between /d/ and /edit in the sheet URL.' };
+      throw new Error('That does not look like a Google Sheet link. Open the sheet and copy the whole address from the browser bar.');
     }
+    const webAppUrl = input.webAppUrl.trim();
+    if (webAppUrl && !/^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[A-Za-z0-9_-]+\/exec\/?$/.test(webAppUrl)) {
+      throw new Error('The Web App URL must look like https://script.google.com/macros/s/…/exec (from Deploy → Manage deployments in Apps Script).');
+    }
+    const current = await api.getSheetsConfig();
     const cfg: GoogleSheetsSyncConfig = {
-      ...(await api.getSheetsConfig()),
+      ...current,
       spreadsheetId: id,
-      isConfigured: true,
-      lastSyncTimestamp: nowIso()
+      spreadsheetUrl: m ? link : `https://docs.google.com/spreadsheets/d/${id}/edit`,
+      webAppUrl,
+      syncSecret: !current.syncSecret || input.newSecret ? makeSecret() : current.syncSecret,
+      autoSyncOnChange: input.autoSyncOnChange ?? current.autoSyncOnChange ?? true,
+      isConfigured: Boolean(webAppUrl)
     };
     try {
       await setDoc(doc(db, 'systemSettings', 'sheetsConfig'), cfg);
     } catch (e) {
-      throw friendlyError(e, 'Failed to save spreadsheet ID.');
+      throw friendlyError(e, 'Failed to save the Google Sheets settings.');
     }
     sheetsConfigCache = cfg;
+    return cfg;
+  },
+
+  /** Really calls the Apps Script ("ping"): checks the secret, the sheet tabs and Firestore access. */
+  async testSheetsConnection(): Promise<{ success: boolean; message: string; details?: any }> {
+    requireRole(MANAGER_ROLES, 'configure Google Sheets');
+    const cfg = await api.getSheetsConfig();
+    if (!cfg.webAppUrl || !cfg.syncSecret) return { success: false, message: 'Save the sheet link and the Web App URL first.' };
+    let res: any;
+    try {
+      res = await callSheetsScript(cfg.webAppUrl, cfg.syncSecret, { action: 'ping' });
+    } catch (e: any) {
+      await saveSheetsStatus({ lastTestTimestamp: nowIso(), lastTestOk: false });
+      return { success: false, message: e?.message || 'Could not reach the Web App.' };
+    }
+    const problems: string[] = [];
+    if (!res.ok) problems.push(res.error || 'The script refused the request.');
+    if (res.ok && res.spreadsheetId && res.spreadsheetId !== cfg.spreadsheetId) {
+      problems.push(`The script is attached to a different sheet ("${res.spreadsheetName || res.spreadsheetId}") than the link saved here.`);
+    }
+    if (res.ok && res.firestore && !res.firestore.ok) problems.push(`The script cannot read the database: ${res.firestore.error}`);
+    if (res.ok && Array.isArray(res.missingTabs) && res.missingTabs.length) {
+      problems.push(`Missing tabs: ${res.missingTabs.join(', ')}. Run "WANG Sync → Set up this sheet" in the sheet.`);
+    }
+    if (res.ok && res.triggersInstalled === false) {
+      problems.push('Sheet → app editing and the 10-minute sync are not switched on yet. Run "WANG Sync → Set up this sheet" in the sheet.');
+    }
+    const success = problems.length === 0;
+    await saveSheetsStatus({
+      lastTestTimestamp: nowIso(),
+      lastTestOk: success,
+      spreadsheetName: res.spreadsheetName || cfg.spreadsheetName || '',
+      tabsFound: res.tabs || cfg.tabsFound || {}
+    });
     return {
-      success: true,
-      message: 'Spreadsheet ID saved. Automatic two-way sync is not enabled yet: download each tab as CSV below and import it into the sheet (File → Import).'
+      success,
+      message: success
+        ? `Connected to "${res.spreadsheetName}". The script can read the database and all tabs are present.`
+        : problems.join(' '),
+      details: res
     };
+  },
+
+  /** Asks the script to rebuild every tab from the database (first fill, or after problems). */
+  async syncSheetsNow(): Promise<{ success: boolean; message: string }> {
+    requireRole(MANAGER_ROLES, 'sync Google Sheets');
+    const cfg = await api.getSheetsConfig();
+    if (!cfg.webAppUrl || !cfg.syncSecret) return { success: false, message: 'Save the sheet link and the Web App URL first.' };
+    await saveSheetsStatus({ lastSyncStatus: 'In Progress', lastSyncError: '' });
+    try {
+      const res = await callSheetsScript(cfg.webAppUrl, cfg.syncSecret, { action: 'fullSync', source: `app (${currentUser().name})` });
+      if (!res.ok) throw new Error(res.error || 'The script reported an error.');
+      const rows = Number(res.totalRows) || 0;
+      await saveSheetsStatus({
+        lastSyncStatus: 'Success',
+        lastSyncTimestamp: nowIso(),
+        lastSyncError: '',
+        lastSyncSource: `app (${currentUser().name})`,
+        totalSyncedRows: rows
+      });
+      const parts = Object.entries(res.counts || {}).map(([tab, n]) => `${tab}: ${n}`);
+      return { success: true, message: `Sheet updated: ${rows} rows written${parts.length ? ` (${parts.join(', ')})` : ''}.` };
+    } catch (e: any) {
+      await saveSheetsStatus({ lastSyncStatus: 'Failed', lastSyncTimestamp: nowIso(), lastSyncError: e?.message || String(e) });
+      return { success: false, message: e?.message || 'Sync failed.' };
+    }
+  },
+
+  /** Result of the most recent automatic "record changed" push from this device. */
+  getSheetsPushStatus(): { lastPushAt: string | null; lastPushError: string | null } {
+    return { lastPushAt, lastPushError };
   },
 
   async getWorkbookExport(): Promise<Record<string, string[][]>> {

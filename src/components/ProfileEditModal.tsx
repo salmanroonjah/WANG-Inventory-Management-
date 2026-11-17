@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, User, Mail, Phone, Building, Briefcase, AlertCircle, Shield, CheckCircle2 } from 'lucide-react';
 import { UserSession, Employee, LocationRecord } from '../types/inventory.js';
-import { api } from '../services/api.js';
+import { api, MANAGER_ROLES } from '../services/api.js';
 import { BuildingRoomSelector } from './BuildingRoomSelector.js';
 
 interface ProfileEditModalProps {
@@ -29,6 +29,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  // Staff without an admin role may edit only their contact details.
+  const canEditName = MANAGER_ROLES.includes(currentUser.role);
 
   useEffect(() => {
     if (currentUser) {
@@ -62,7 +64,6 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
     try {
       const updatedUser = await api.updateUserProfile({
         name: name.trim(),
-        email: email.trim(),
         phone: phone.trim(),
         designation: designation.trim(),
         officeBranch
@@ -129,7 +130,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               <span className="text-xs font-semibold text-slate-700">Official Role:</span>
             </div>
             <span className="px-3 py-1 rounded-full text-xs font-black bg-[#f1cc11] text-[#003279] shadow-xs">
-              👑 Super Admin (Executive Director)
+              {currentUser.role}
             </span>
           </div>
 
@@ -144,25 +145,26 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
+              readOnly={!canEditName}
               placeholder="Full name"
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden read-only:text-slate-500 read-only:cursor-not-allowed"
             />
+            {!canEditName && <p className="text-[10px] text-slate-500 mt-1">Only an admin can change your name.</p>}
           </div>
 
           {/* Email */}
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center gap-1.5">
               <Mail className="w-3.5 h-3.5 text-[#003279]" />
-              Official Email Address *
+              Google Sign-in Email
             </label>
             <input
               type="email"
-              required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="salmankhanroonjha123@gmail.com"
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:ring-2 focus:ring-[#003279] focus:outline-hidden"
+              readOnly
+              className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs font-medium text-slate-500 cursor-not-allowed"
             />
+            <p className="text-[10px] text-slate-500 mt-1">This is the account you sign in with. Another admin can change it from the Employees page.</p>
           </div>
 
           {/* Designation & Phone */}
